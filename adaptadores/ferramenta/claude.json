@@ -1,0 +1,36 @@
+{
+  "nome": "Claude Code",
+  "binario": "claude",
+  "tools": {
+    "read": [
+      "Read"
+    ],
+    "search": [
+      "Grep",
+      "Glob"
+    ],
+    "edit": [
+      "Edit",
+      "Write"
+    ],
+    "shell": [
+      "Bash"
+    ],
+    "web": [
+      "WebSearch",
+      "WebFetch"
+    ],
+    "agent": [
+      "Agent"
+    ]
+  },
+  "modelos": {
+    "forte": "opus",
+    "medio": "sonnet",
+    "leve": "haiku"
+  },
+  "vars": {
+    "argumentos": "$ARGUMENTS",
+    "pergunte": "use a ferramenta AskUserQuestion e espere a resposta"
+  }
+}

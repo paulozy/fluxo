@@ -1,0 +1,60 @@
+{
+  "nome": "Kiro CLI",
+  "binario": "kiro-cli",
+  "_fonte": "https://kiro.dev/docs/custom-agents/configuration-reference; os nomes do v2 vêm do port antigo (a validar no WSL)",
+  "tools": {
+    "v2": {
+      "read": [
+        "read"
+      ],
+      "search": [
+        "grep",
+        "glob"
+      ],
+      "edit": [
+        "write"
+      ],
+      "shell": [
+        "shell"
+      ],
+      "web": [
+        "web_search",
+        "web_fetch"
+      ]
+    },
+    "v3": {
+      "read": [
+        "read"
+      ],
+      "search": [
+        "read"
+      ],
+      "edit": [
+        "write"
+      ],
+      "shell": [
+        "shell"
+      ],
+      "web": [
+        "web"
+      ],
+      "agent": [
+        "subagent"
+      ]
+    }
+  },
+  "permitidas": {
+    "v2": [
+      "read",
+      "grep",
+      "glob"
+    ],
+    "v3": []
+  },
+  "modelos": {},
+  "vars": {
+    "argumentos": "o texto que veio junto do comando (se não veio nada, pergunte)",
+    "pergunte": "faça a pergunta na conversa e pare o turno até a resposta"
+  },
+  "_permitidas": "só leitura local sem aprovação; rede e shell sempre pedem (página de terceiro pode injetar instrução)"
+}

@@ -1,0 +1,3 @@
+#!/bin/sh
+# varre o repo atrás de dado de empresa antes de cada commit (git config core.hooksPath .githooks)
+exec python3 "$(git rev-parse --show-toplevel)/fluxo" varrer

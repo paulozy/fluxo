@@ -1,0 +1,7 @@
+{
+  "nome": "GitLab",
+  "pr": "MR",
+  "prs": "MRs",
+  "cli": "glab",
+  "host": ""
+}

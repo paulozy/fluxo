@@ -1,0 +1,30 @@
+{
+  "nome": "Copilot CLI",
+  "binario": "copilot",
+  "_fonte": "https://docs.github.com/en/copilot/reference/custom-agents-configuration (aliases de tools)",
+  "tools": {
+    "read": [
+      "read"
+    ],
+    "search": [
+      "search"
+    ],
+    "edit": [
+      "edit"
+    ],
+    "shell": [
+      "execute"
+    ],
+    "web": [
+      "web"
+    ],
+    "agent": [
+      "agent"
+    ]
+  },
+  "modelos": {},
+  "vars": {
+    "argumentos": "o texto que veio junto do comando (se não veio nada, pergunte)",
+    "pergunte": "faça a pergunta na conversa e pare o turno até a resposta"
+  }
+}

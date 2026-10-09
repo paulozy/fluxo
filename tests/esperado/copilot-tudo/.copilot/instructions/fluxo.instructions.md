@@ -154,3 +154,4 @@ Use-os para manter a conversa enxuta: a saída longa (pesquisa, testes, revisão
 - `doc-writer`: Technical documentation writer.
 - `researcher`: Codebase researcher.
 - `test-runner`: Runs tests and reports results.
+- `verificador`: Checks a branch diff against the approved plan: does it deliver the premise, which acceptance criteria are not covered by a test, what went out of scope, and which risks have no coverage.

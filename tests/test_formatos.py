@@ -17,9 +17,9 @@ TOOLS_KIRO = {
 }
 
 
-def gerar(cenario):
+def gerar(cenario, **extra):
     with tempfile.TemporaryDirectory() as d:
-        cam = escrever_config(d, cenario)
+        cam = escrever_config(d, cenario, **extra)
         arquivos, avisos = montar.montar(config.carregar(cam, montar.modulos_existentes(RAIZ)), RAIZ, cam)
         return {a.rel: a.conteudo.decode() for a in arquivos}, avisos
 
@@ -40,26 +40,28 @@ class Formatos(unittest.TestCase):
                         self.assertEqual(set(meta), {"name", "description"})
 
     def test_agentes_copilot_e_claude(self):
-        for cenario, pasta, sufixo in (("copilot", ".copilot/agents/", ".agent.md"), ("claude", ".claude/agents/", ".md")):
+        for cenario, pasta, sufixo, n in (("copilot", ".copilot/agents/", ".agent.md", 7), ("claude", ".claude/agents/", ".md", 7),
+                                          ("copilot-tudo", ".copilot/agents/", ".agent.md", 8),
+                                          ("claude-tudo", ".claude/agents/", ".md", 8)):
             gerado, _ = gerar(cenario)
             agentes = {rel: t for rel, t in gerado.items() if rel.startswith(pasta)}
-            self.assertEqual(len(agentes), 7)
+            self.assertEqual(len(agentes), n, cenario)
             for rel, texto in agentes.items():
                 meta, corpo = fonte.ler(texto, rel)
                 self.assertTrue(rel.endswith(sufixo))
                 self.assertTrue(meta["description"])
                 self.assertTrue(corpo.strip())
-                if cenario == "copilot":
+                if cenario.startswith("copilot"):
                     self.assertNotIn("model", meta)  # sem `modelos` na config: herda o da sessão
                     self.assertTrue(set(meta["tools"]) <= {"read", "search", "edit", "execute", "web", "agent"})
                 else:
                     self.assertIn(meta["model"], ("opus", "sonnet", "haiku"))
 
     def test_agentes_kiro(self):
-        for motor in ("v2", "v3"):
-            gerado, avisos = gerar(f"kiro-{motor}")
+        for motor, extra in (("v2", {}), ("v3", {}), ("v2", {"modulos": ["revisor"]})):
+            gerado, avisos = gerar(f"kiro-{motor}", **extra)
             agentes = {rel: json.loads(t) for rel, t in gerado.items() if rel.startswith(".kiro/agents/")}
-            self.assertEqual(len(agentes), 7)
+            self.assertEqual(len(agentes), 8 if extra else 7)
             for rel, ag in agentes.items():
                 with self.subTest(motor=motor, agente=rel):
                     self.assertEqual(Path(rel).stem, ag["name"])
@@ -80,7 +82,7 @@ class Formatos(unittest.TestCase):
                     self.assertNotIn("{{", texto)
                     self.assertNotRegex(texto, r"<!-- (se|senao|fim)\b")
                     self.assertNotRegex(texto, r"/home/|/Users/")
-                    if cenario != "claude":
+                    if not cenario.startswith("claude"):
                         self.assertNotIn("$ARGUMENTS", texto)
 
     def test_forge_certo_em_cada_cenario(self):
@@ -88,9 +90,51 @@ class Formatos(unittest.TestCase):
         concluir = copilot[".copilot/skills/concluir/SKILL.md"]
         self.assertIn("glab mr create", concluir)
         self.assertNotIn("gh pr create", concluir)
-        self.assertNotIn(".copilot/skills/pr-feedback/SKILL.md", copilot)  # requer forge:github
+        feedback = copilot[".copilot/skills/pr-feedback/SKILL.md"]
+        self.assertIn("glab api --hostname gitlab.exemplo.com", feedback)
+        self.assertNotIn("gh api", feedback)
+        self.assertNotIn("/revisar-pr", concluir)  # módulo revisor desligado
         claude, _ = gerar("claude")
         self.assertIn("gh pr create --base develop", claude[".claude/skills/concluir/SKILL.md"])
+        self.assertNotIn("glab", claude[".claude/skills/pr-feedback/SKILL.md"])
+
+    def test_comandos_do_forge_linha_a_linha(self):
+        """Invariantes por linha, que o golden não garante: regenerar o golden aceitaria um erro."""
+        for cenario in ("copilot-tudo", "claude-tudo"):
+            gerado, _ = gerar(cenario)
+            for rel, texto in gerado.items():
+                if not rel.endswith(".md"):
+                    continue
+                for n, linha in enumerate(texto.splitlines(), 1):
+                    with self.subTest(cenario=cenario, arquivo=rel, linha=n):
+                        if "glab api" in linha:
+                            self.assertIn("--hostname gitlab.exemplo.com", linha)
+                        if "glab mr" in linha and " -R " in linha:
+                            self.assertIn("-R https://gitlab.exemplo.com/", linha)
+                        self.assertNotRegex(linha, r"projects/<[^>%]*/")  # o projeto sempre codificado
+                        self.assertNotRegex(linha, r"\bbody=(?!@)")  # resposta sempre por arquivo
+                        if cenario == "copilot-tudo":
+                            self.assertNotRegex(linha, r"`gh |\bgh (api|pr)\b")
+                        else:
+                            self.assertNotIn("glab", linha)
+
+    def test_gitlab_sem_host_e_recusado(self):
+        with self.assertRaisesRegex(montar.ErroMontagem, "gitlab.host está vazio"):
+            gerar("copilot", gitlab={"host": " "})
+
+    def test_revisao_vem_antes_do_push(self):
+        for cenario in ("copilot-tudo", "claude-tudo"):
+            gerado, _ = gerar(cenario)
+            concluir = next(t for rel, t in gerado.items() if rel.endswith("skills/concluir/SKILL.md"))
+            self.assertLess(concluir.index("/revisar-pr"), concluir.index("1. **Resumo"))
+            self.assertLess(concluir.index("/revisar-pr"), concluir.index("Push da branch"))
+
+    def test_revisor_ligado(self):
+        tudo, _ = gerar("copilot-tudo")
+        self.assertIn("/revisar-pr", tudo[".copilot/skills/concluir/SKILL.md"])
+        self.assertIn("glab mr diff", tudo[".copilot/skills/revisar-pr/SKILL.md"])
+        self.assertIn(".copilot/agents/verificador.agent.md", tudo)
+        self.assertIn("`verificador`", tudo[".copilot/instructions/fluxo.instructions.md"])
 
     def test_instrucoes_listam_os_agentes(self):
         gerado, _ = gerar("kiro-v2")

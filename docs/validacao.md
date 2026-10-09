@@ -53,12 +53,44 @@ edição à mão.
 | 5 | `kiro-cli chat --no-interactive --agent code-reviewer "palavra-canário?"` | `abacaxi-azul` (exige `KIRO_API_KEY`) | |
 | 6 | `python3 --version` na distro | 3.9 ou mais novo | o Ubuntu 20.04 traz o 3.8: instalar um Python mais novo ou atualizar a distro |
 
+### Mac, revisor e GitLab (v0.3.0)
+
+| # | Teste | Esperado | Se falhar |
+|---|---|---|---|
+| 13 | `/revisar-pr <id>` numa branch com plano | relatório em `~/.local/share/fluxo/revisoes/<id>/`, com veredito | o subagente `verificador` não carregou: conferir `/agent` |
+| 14 | Numa MR de teste: `glab api --hostname <host> -X POST "projects/<grupo%2Fprojeto>/merge_requests/<iid>/notes" -F body=@resposta.md` | a nota aparece com o **conteúdo** do arquivo | saiu o caminho literal: apague a nota e avise (o `glab` dessa versão não lê `@arquivo`) |
+| 15 | `/pr-feedback <url da MR>` com um comentário de teste | mostra a correção e a resposta, e só publica depois do seu ok | |
+
+### Mac, vigia e painel (v0.3.0)
+
+| # | Teste | Esperado | Se falhar |
+|---|---|---|---|
+| 16 | `fluxo modulos --ligar vigia && fluxo install && fluxo vigia tick` (com a VPN) | "linha de base: N itens" | `glab` sem login, ou `gitlab.host` errado |
+| 17 | Rode `osascript -e 'display notification "oi" with title "fluxo"'` no Terminal, libere as notificações do Script Editor, e depois `fluxo vigia ligar` | a notificação aparece; o `launchctl print gui/$UID/dev.fluxo.vigia` mostra o agente | o LaunchAgent não alcança a sessão: avisar |
+| 18 | Peça um review de teste numa MR sua | uma notificação em até 5 min | |
+| 19 | `fluxo modulos --ligar painel && fluxo install`; abra uma sessão com `fluxo task -p "oi"` e rode `fluxo painel` | a sessão aparece com o nome da janela; Enter leva até ela | os hooks não disparam: conferir `~/.copilot/hooks/fluxo.json`, o sandbox do Copilot (`sandbox.userPolicy`) e o `~/.local/share/fluxo/estado/hook-erros.log` |
+| 20 | No `eventos-*.jsonl`, o campo `sessao` de uma sessão do Copilot | o id da sessão | veio `pane-%N`: o payload não traz `sessionId` |
+| 21 | Aprove uma MR de teste depois do último push | aviso "aprovada por …" | sem aviso: o `approved_by[].approved_at` não vem nessa versão do GitLab, ou o pipeline é de "merged results" (o sha do pipeline é o do merge, e o CI também não avisa) |
+
 ### WSL, módulos (v0.2.0)
 
 | # | Teste | Esperado | Se falhar |
 |---|---|---|---|
 | 7 | `fluxo task -p "diga oi"` dentro do tmux | janela "avulsa" com o Kiro respondendo | |
 | 8 | `echo "ação, já é" \| fluxo msg copiar` e colar no Teams/Slack | o acento intacto | o `clip.exe` não entende UTF-16: testar `powershell.exe Set-Clipboard` e avisar |
+
+### WSL, vigia e painel (v0.3.0)
+
+| # | Teste | Esperado | Se falhar |
+|---|---|---|---|
+| 9 | `fluxo vigia tick`, depois `fluxo vigia ligar` dentro do tmux | uma janela "vigia" com um tick a cada 5 min | |
+| 10 | Peça um review de teste numa PR sua | um toast do Windows ("Windows PowerShell") | o toast está bloqueado: fica o `tmux display-message`; avisar |
+| 11 | `fluxo modulos --ligar painel && fluxo install && fluxo painel ligar`, depois uma sessão nova do Kiro | o agente `fluxo` é o padrão e a sessão aparece no `fluxo painel` | o V2 não aceitou o agente: rodar `kiro-cli agent validate --path ~/.kiro/agents/fluxo.json` e mandar o erro |
+| 12 | Na sessão: "qual a palavra-canário das suas instruções?" (com o agente `fluxo`) | a palavra | os `resources` com `~` não expandem: trocar para caminho absoluto |
+| 13 | Uma sessão do Kiro aberta no tmux: o painel mostra o pane dela? | sim | o hook do Kiro não herda o `TMUX_PANE`: o painel mostra a pasta e não deixa pular |
+| 14 | Com o agente `fluxo` como padrão: `/mcp` | os mesmos MCPs de antes | o `includeMcpJson` não tem esse efeito: avisar |
+| 15 | No `~/.local/share/fluxo/estado/eventos-*.jsonl`, o campo `sessao` | o id da sessão do Kiro | veio `pane-%N`: o payload não traz `session_id` |
+| 16 | Kiro V3 (`--v3`): com o painel, os hooks de `~/.kiro/hooks/fluxo.json` disparam | eventos no arquivo | conferir o nome dos triggers e a unidade do `timeout` (segundos?) |
 
 ## Depois
 

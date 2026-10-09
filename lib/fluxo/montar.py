@@ -47,7 +47,9 @@ def contexto(cfg, raiz, caminhos):
     adapt = _json(Path(raiz) / "adaptadores" / "ferramenta" / f"{ferr}.json")
     forge = dict(_json(Path(raiz) / "adaptadores" / "forge" / f"{cfg['forge']}.json"))
     if cfg["forge"] == "gitlab":
-        forge["host"] = (cfg.get("gitlab") or {}).get("host", "")
+        forge["host"] = ((cfg.get("gitlab") or {}).get("host") or "").strip()
+        if not forge["host"]:  # sairia `glab api --hostname  "projects/…"`, e o endpoint viraria o host
+            raise ErroMontagem("gitlab.host está vazio: fluxo init --forge gitlab --gitlab-host <host> --forcar")
     motor = cfg["kiro"]["motor"] if ferr == "kiro" else "-"
     eixos = {e: cfg[e] for e in cfgmod.EIXOS}
     eixos.update(motor=motor, modulo=set(cfg["modulos"]))
@@ -120,8 +122,6 @@ def montar(cfg, raiz, caminhos):
                 raise ErroMontagem(f"{onde}: o name tem que ser igual ao nome da pasta ({p.parent.name})")
             if not meta.get("description") or len(meta["description"]) > 1024:
                 raise ErroMontagem(f"{onde}: description obrigatória, com até 1024 caracteres")
-            if meta.get("requer") and not render.condicao(meta["requer"], eixos, validos, onde):
-                continue  # ex.: `requer: forge:github` numa máquina com GitLab
             skills.append({"name": meta["name"], "description": meta["description"],
                            "argument-hint": meta.get("argument-hint"),
                            "corpo": CABECALHO.format(fonte=onde) + tpl(corpo, onde).lstrip("\n")})

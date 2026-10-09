@@ -107,24 +107,24 @@ class Install(unittest.TestCase):
         self.assertIn(".claude/rules/fluxo.md", instalar.ler_manifesto(cam.manifesto))
 
     def test_o_que_sai_da_config_e_removido(self):
-        self.instalar("kiro-v2")
-        skill = self.home / ".kiro" / "skills" / "pr-feedback" / "SKILL.md"
+        self.instalar("kiro-v2", modulos=["mensagens"])
+        skill = self.home / ".kiro" / "skills" / "aviso" / "SKILL.md"
         self.assertTrue(skill.exists())
-        code, out, _ = self.instalar("kiro-v2", forge="gitlab", gitlab={"host": "g.exemplo.com"})
+        code, out, _ = self.instalar("kiro-v2")  # módulo desligado
         self.assertEqual(code, 0)
         self.assertIn("remover", out)
         self.assertFalse(skill.parent.exists())  # a pasta da skill sai junto
 
     def test_removido_mas_editado_fica(self):
-        self.instalar("kiro-v2")
-        skill = self.home / ".kiro" / "skills" / "pr-feedback" / "SKILL.md"
+        self.instalar("kiro-v2", modulos=["mensagens"])
+        skill = self.home / ".kiro" / "skills" / "aviso" / "SKILL.md"
         skill.write_text("editei\n")
-        code, out, _ = self.instalar("kiro-v2", forge="gitlab", gitlab={"host": "g.exemplo.com"})
+        code, out, _ = self.instalar("kiro-v2")
         self.assertEqual(code, 0)
-        self.assertIn("  manter     ~/.kiro/skills/pr-feedback/SKILL.md  (saiu do fluxo, mas foi editado", out)
+        self.assertIn("  manter     ~/.kiro/skills/aviso/SKILL.md  (saiu do fluxo, mas foi editado", out)
         self.assertEqual(skill.read_text(), "editei\n")
         cam = config.Caminhos(home=self.home)
-        self.assertNotIn(".kiro/skills/pr-feedback/SKILL.md", instalar.ler_manifesto(cam.manifesto))
+        self.assertNotIn(".kiro/skills/aviso/SKILL.md", instalar.ler_manifesto(cam.manifesto))
 
     def test_troca_de_motor_atualiza_os_agentes(self):
         self.instalar("kiro-v2")

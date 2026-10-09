@@ -10,6 +10,13 @@ O pedido: {{argumentos}}
 
 Rode depois do code review e do E2E. Siga esta ordem: o plano fecha por último, porque só então
 existem os links.
+<!-- se modulo:revisor -->
+
+**Antes de tudo, a revisão:** siga a skill `/revisar-pr` com o `<id>` da tarefa. Continue só com
+APROVÁVEL, ou com o ok explícito do usuário sobre o relatório. Se a revisão mudou código, o resumo,
+as docs e o CHANGELOG abaixo descrevem o código novo, e o fechamento do plano registra o que mudou
+depois do E2E.
+<!-- fim -->
 
 1. **Resumo do que foi de fato implementado**, não do que foi planejado. Se uma fase caiu ou mudou,
    diga qual e por quê. Compare com o plano em `{{dados}}/planos/<id>.md`.

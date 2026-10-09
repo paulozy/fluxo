@@ -1,5 +1,60 @@
 # Changelog
 
+## [0.3.0] — 2026-10-09
+
+As fases 3, 4 e 5 do plano, numa versão só: revisor lite, vigia e painel.
+
+### Adicionado
+
+- **Módulo `revisor`:** a skill `/revisar-pr` e o agente `verificador` (o diff contra o plano:
+  premissa, critérios de aceite com teste, escopo, riscos).
+  - Duas revisões isoladas por rodada, com o diff `<base>...<sha>` explícito para os dois.
+  - Revisor que não citou o diff invalida a rodada (PRECISA DE HUMANO).
+  - No máximo 2 revisões: a correção entre elas é commitada, para a rodada 2 e o push a enxergarem.
+  - PR/MR de outra pessoa é só leitura (sem rodar os testes dela).
+  - É a versão lite do pr-reviewer: sem stack e sem E2E automático.
+- **`/concluir`:** com o revisor ligado, a revisão vem antes do resumo e da PR/MR, e só se segue com
+  APROVÁVEL ou com o ok do usuário sobre o relatório.
+- **`/pr-feedback` para GitLab:**
+  - discussões com `--paginate` e respostas por arquivo (`-F body=@`), sempre com `--hostname`;
+  - o projeto com todas as barras codificadas;
+  - a menção `@login` entra no texto que o usuário aprova antes de publicar.
+- **`gitlab.host` vazio é recusado no `install`:** antes, ele virava `--hostname` sem valor.
+- **Módulo `vigia`:** `fluxo vigia [tick|loop|ligar|desligar]`, que só avisa.
+  - **Forge:** GitHub pelo GraphQL do `gh`, com todas as abertas mais as 30 mergeadas recentes em
+    consultas separadas. GitLab pelo `glab api --hostname`, com MRs, discussões, aprovações (válidas
+    se vieram depois da última versão), pipeline e merge (a MR que sumiu da lista).
+  - **Avisos:** cada novidade tem uma chave e é avisada uma vez. O primeiro tick é a linha de base.
+    Uma leva grande vira um aviso só.
+  - **Erros:** sem rede (VPN) o erro é registrado uma vez; estado corrompido recomeça pela base;
+    dois ticks juntos não rodam (flock).
+  - **Aviso na tela:**
+    - Mac: `osascript` com o texto por argv;
+    - WSL: toast do PowerShell com o texto por variável de ambiente e `WSLENV`;
+    - Linux: `notify-send`.
+
+    Se nenhum funcionar, vai `tmux display-message`. O título da PR nunca entra num script.
+  - **Agendamento:**
+    - Mac: LaunchAgent;
+    - Linux: systemd `--user`;
+    - WSL: uma janela do tmux com `fluxo vigia loop`, porque o systemd não segura o WSL.
+- **Módulo `painel`:** `fluxo hook` + `fluxo painel` (curses, só stdlib), para Copilot e Kiro.
+  - **O hook** grava um evento normalizado por linha (`os.write` em O_APPEND). Nunca imprime e sempre
+    sai com 0: no Kiro o stdout entra no contexto, e no Copilot um `preToolUse` que falha nega a
+    ferramenta. Por isso o painel não usa `preToolUse`.
+  - **Onde ficam os hooks:**
+    - Copilot: `~/.copilot/hooks/fluxo.json`;
+    - Kiro V3: `~/.kiro/hooks/fluxo.json`;
+    - Kiro V2: um agente `fluxo` com os hooks embutidos e o steering e as skills nos `resources`. O
+      `fluxo painel ligar` o torna o padrão e guarda o anterior.
+  - **A tela** mostra os estados trabalhando, sua vez, pergunta (só no Copilot), parada e acabou.
+    Enter leva até o pane (`tmux switch-client`, nunca `send-keys`); `--texto` imprime uma vez.
+
+### Fora desta versão
+
+- O `task` usar os eventos do painel para "parada há 30 min não ocupa vaga" (estava no plano): hoje a
+  vaga só é liberada quando o pane morre.
+
 ## [0.2.0] — 2026-10-09
 
 ### Adicionado

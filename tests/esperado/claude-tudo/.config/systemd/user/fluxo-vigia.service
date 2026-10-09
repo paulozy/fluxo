@@ -1,0 +1,7 @@
+[Unit]
+Description=fluxo vigia (avisa das suas PRs/MRs)
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/fluxo vigia tick
+TimeoutStartSec=5min

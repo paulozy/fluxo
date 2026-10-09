@@ -49,7 +49,7 @@ O `init` grava `~/.config/fluxo/config.json`:
   | `/revisar` | o `code-reviewer` sobre o diff |
   | `/commitar` | commit no padrão do repo, sem trailer de IA |
   | `/concluir` | resumo, docs, PR/MR (com aprovação), rascunho do aviso, limpeza, fechamento do plano |
-  | `/pr-feedback` | responde o review de uma PR (só GitHub, por enquanto) |
+  | `/pr-feedback` | responde o review de uma PR (GitHub) ou MR (GitLab), mostrando tudo antes de publicar |
 
 - **`~/.local/bin/fluxo`**, que roda a cópia de onde o install saiu.
 
@@ -65,6 +65,9 @@ e lembra de rodar `fluxo install`.
 | `task` | `fluxo task <ID>` abre a tarefa numa janela do tmux, em segundo plano, com `/planejar <ID>`, e ocupa vaga (`task.max`, padrão 2). `fluxo task -p "…"` abre uma sessão avulsa (nome do `/comando`, ou `avulsa`, `avulsa-b`…), que não ocupa vaga. `--lista` mostra as vivas. | tmux |
 | `mensagens` | skill `/aviso`: redige no seu tom (`~/.config/fluxo/tom.md`, criado por `fluxo msg tom`), pede aprovação e copia para a área de transferência (`fluxo msg copiar`). Nada é enviado. | pbcopy, clip.exe, wl-copy, xclip ou xsel |
 | `trava` | `fluxo trava pegar/soltar/status/quebrar/rodar`: uma sessão por vez no stack local. O E2E das instruções passa a usar. | tmux (para saber se o dono vive) |
+| `vigia` | `fluxo vigia tick` lê as suas PRs (GitHub) ou MRs (GitLab) e avisa na área de trabalho: review ou comentário novo, aprovação no commit atual, CI que quebrou ou passou, merge. Só avisa. `fluxo vigia ligar` agenda: launchd no Mac, systemd no Linux, uma janela do tmux no WSL. `fluxo vigia` mostra o status. | `gh` ou `glab` logado |
+| `painel` | `fluxo painel`: as sessões da ferramenta ao vivo (trabalhando, sua vez, pergunta, parada), com Enter levando até a sessão no tmux. Os hooks vão para `~/.copilot/hooks` ou `~/.kiro/hooks`; no Kiro V2, um agente `fluxo` vira o padrão (`fluxo painel ligar`). Só Copilot e Kiro: no Claude o painel é o agent-tree. | tmux |
+| `revisor` | skill `/revisar-pr` e o agente `verificador`: duas revisões isoladas (`code-reviewer` + diff contra o plano), relatório com veredito (REPROVAR, PRECISA DE HUMANO, APROVÁVEL) em `~/.local/share/fluxo/revisoes/`. O `/concluir` roda antes de abrir a PR/MR. | — |
 
 - **Comando de abertura de cada ferramenta:** fica em `adaptadores/ferramenta/*.json` (`lancar`). Se o
   da sua versão for outro, sobrescreva na config: `"task": {"lancar": ["copilot", "-i", "{prompt}"]}`.

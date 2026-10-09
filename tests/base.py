@@ -27,9 +27,15 @@ CENARIOS = {
     "kiro-v3": {"ferramenta": "kiro", "forge": "github", "so": "wsl", "kiro": {"motor": "v3"}},
     # todos os módulos ligados: cada fase acrescenta os seus
     "copilot-tudo": {"ferramenta": "copilot", "forge": "gitlab", "so": "mac", "gitlab": {"host": "gitlab.exemplo.com"},
-                     "modulos": ["mensagens", "task", "trava"]},
+                     "modulos": ["mensagens", "painel", "revisor", "task", "trava", "vigia"]},
+    # tudo o que o Claude aceita (o painel não: lá é o agent-tree), no GitHub
+    "claude-tudo": {"ferramenta": "claude", "forge": "github", "so": "linux",
+                    "modulos": ["mensagens", "revisor", "task", "trava", "vigia"]},
+    # o painel no Kiro V2: os hooks embutidos num agente `fluxo`, que vira o padrão
+    "kiro-v2-painel": {"ferramenta": "kiro", "forge": "github", "so": "wsl", "kiro": {"motor": "v2"},
+                       "modulos": ["painel", "vigia"]},
 }
-PASTAS_FERRAMENTA = (".claude", ".copilot", ".kiro")
+PASTAS_FERRAMENTA = (".claude", ".copilot", ".kiro", "Library", ".config/systemd")  # + agendamento do vigia
 
 
 def escrever_config(home, cenario, **extra):

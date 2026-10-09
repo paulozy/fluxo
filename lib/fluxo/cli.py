@@ -5,11 +5,12 @@ Saídas: 0 ok; 1 erro; 2 config ou uso inválido; 3 conflito (nada foi gravado).
 import argparse
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 
 from . import config as cfgmod
-from . import doctor, empacotar, fonte, instalar, mensagens, montar, render, task, trava, varredura
+from . import doctor, empacotar, fonte, instalar, mensagens, montar, painel, render, task, trava, varredura, vigia
 
 ERROS_DE_USO = (cfgmod.ErroConfig, montar.ErroMontagem, render.ErroTemplate, fonte.ErroFonte)
 
@@ -133,6 +134,43 @@ def cmd_trava(args, raiz):
         return 2
     print(("trava sua: " if ok else "") + trava.descrever(dono, True))
     return 0 if ok else trava.OCUPADA
+
+
+def cmd_vigia(args, raiz):
+    cam, cfg = _carregar(args, raiz, "vigia")
+    if args.acao is None:
+        print(vigia.status(cam))
+        return 0
+    if args.acao == "tick":
+        code, resumo = vigia.tick(cfg, cam)
+        print(resumo)
+        return code
+    if args.acao == "loop":
+        return vigia.loop(cfg, cam, args.intervalo or cfg["vigia"]["intervalo"])
+    if args.acao == "ligar":
+        code, msg = vigia.ligar(cfg, cam, alvo=args.target, dentro_do_tmux=bool(os.environ.get("TMUX")))
+    else:
+        code, msg = vigia.desligar(cfg, cam)
+    print(msg, file=sys.stderr if code else sys.stdout)
+    return code
+
+
+def cmd_hook(args, raiz):
+    """Chamado pela ferramenta em cada evento: não lê a config (que pode estar quebrada), nunca imprime,
+    sempre sai com 0."""
+    return painel.hook(_caminhos(args).estado, args.ferramenta, args.evento)
+
+
+def cmd_painel(args, raiz):
+    cam, cfg = _carregar(args, raiz, "painel")
+    if args.acao in ("ligar", "desligar"):
+        code, msg = (painel.ligar if args.acao == "ligar" else painel.desligar)(cfg, cam, run=subprocess.run)
+        print(msg, file=sys.stderr if code else sys.stdout)
+        return code
+    if args.texto or not sys.stdout.isatty():
+        print("\n".join(painel.linhas_texto(painel.ver(cam))))
+        return 0
+    return painel.tela(cam, run=subprocess.run)
 
 
 def cmd_init(args, raiz):
@@ -302,11 +340,27 @@ def parser():
     p.add_argument("--forcar", action="store_true", help="quebrar: mesmo com o dono vivo")
     p.set_defaults(fn=cmd_trava)
 
+    p = sub.add_parser("vigia", help="avisa das suas PRs/MRs (módulo vigia); sem ação, mostra o status")
+    p.add_argument("acao", nargs="?", choices=("tick", "loop", "ligar", "desligar"))
+    p.add_argument("--intervalo", type=int, help="loop: segundos entre as passadas (padrão: vigia.intervalo)")
+    p.add_argument("--target", help="ligar no WSL: sessão do tmux onde abrir a janela do vigia")
+    p.set_defaults(fn=cmd_vigia)
+
+    p = sub.add_parser("hook", help="(chamado pelas ferramentas) grava um evento para o painel")
+    p.add_argument("--ferramenta", required=True)
+    p.add_argument("--evento", default="")
+    p.set_defaults(fn=cmd_hook)
+
+    p = sub.add_parser("painel", help="as sessões ao vivo (módulo painel); ligar/desligar no Kiro V2")
+    p.add_argument("acao", nargs="?", choices=("ligar", "desligar"))
+    p.add_argument("--texto", action="store_true", help="imprime uma vez, sem a tela interativa")
+    p.set_defaults(fn=cmd_painel)
+
     p = sub.add_parser("varrer", help="procura dado de empresa no repo (o pre-commit roda)")
     p.add_argument("--hash", metavar="TERMO", help="só imprime o hash do termo, para o tests/proibidos.sha256")
     p.set_defaults(fn=cmd_varrer)
 
-    for nome in ("init", "install", "uninstall", "doctor", "modulos", "task", "msg", "trava"):
+    for nome in ("init", "install", "uninstall", "doctor", "modulos", "task", "msg", "trava", "vigia", "hook", "painel"):
         sub.choices[nome].add_argument("--home", help="usa esta pasta no lugar do HOME para config, dados e "
                                        "arquivos instalados (teste); o tmux e o ~ do codigo_dir continuam os reais")
     return ap

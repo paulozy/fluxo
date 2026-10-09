@@ -72,6 +72,15 @@ edição à mão.
 | 20 | No `eventos-*.jsonl`, o campo `sessao` de uma sessão do Copilot | o id da sessão | veio `pane-%N`: o payload não traz `sessionId` |
 | 21 | Aprove uma MR de teste depois do último push | aviso "aprovada por …" | sem aviso: o `approved_by[].approved_at` não vem nessa versão do GitLab, ou o pipeline é de "merged results" (o sha do pipeline é o do merge, e o CI também não avisa) |
 
+### Mac, promoção (v0.4.0)
+
+| # | Teste | Esperado | Se falhar |
+|---|---|---|---|
+| 22 | `fluxo init … --alvos staging,main --forcar`, `fluxo modulos --ligar promover && fluxo install` | a seção "Depois do QA: promoção para staging, main" nas instruções | |
+| 23 | Num repo de teste: `git fetch origin merge-requests/<iid>/head:refs/promover/<iid>` de uma MR mergeada | o ref é criado | o GitLab da empresa não expõe o ref da MR: avisar (a skill precisa de outro caminho para os commits) |
+| 24 | O `diff_refs.base_sha` de uma MR mergeada com squash: `git rev-list --reverse --no-merges <base_sha>..refs/promover/<iid>` | os commits da MR, e só eles | avisar |
+| 25 | `/promover <id>` numa tarefa de teste já mergeada na develop | mostra as MRs para staging e main antes de publicar; os commits vazios aparecem como pulados | |
+
 ### WSL, módulos (v0.2.0)
 
 | # | Teste | Esperado | Se falhar |

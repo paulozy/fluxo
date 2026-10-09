@@ -178,13 +178,24 @@ def cmd_init(args, raiz):
     if cam.config.exists() and not args.forcar:
         print(f"fluxo: {cam.config} já existe; --forcar para sobrescrever", file=sys.stderr)
         return 2
+    anterior = {}
+    if cam.config.exists():  # o --forcar refaz os eixos, mas não apaga os módulos nem as opções deles
+        try:
+            anterior = json.loads(cam.config.read_text(encoding="utf-8"))
+        except ValueError:
+            anterior = {}
     cfg = {"versao": 1, "ferramenta": args.ferramenta, "forge": args.forge, "tracker": args.tracker,
            "chat": args.chat, "so": args.so or cfgmod.detectar_so(), "modulos": [],
            "git": {"base": args.base}, "codigo_dir": args.codigo_dir, "modelos": {}}
+    for chave in ("modulos", "modelos", "task", "vigia", "promover"):
+        if isinstance(anterior, dict) and chave in anterior:
+            cfg[chave] = anterior[chave]
     if args.ferramenta == "kiro":
         cfg["kiro"] = {"motor": args.motor}
     if args.forge == "gitlab":
         cfg["gitlab"] = {"host": args.gitlab_host or ""}
+    if args.alvos:
+        cfg["promover"] = {"alvos": [a.strip() for a in args.alvos.split(",") if a.strip()]}
     try:
         cfgmod.validar(cfg, montar.modulos_existentes(raiz))
     except cfgmod.ErroConfig as exc:
@@ -289,6 +300,7 @@ def parser():
     p.add_argument("--tracker", default="nenhum", choices=cfgmod.EIXOS["tracker"])
     p.add_argument("--motor", default="v2", choices=cfgmod.MOTORES, help="Kiro: v2 (padrão do 2.x) ou v3")
     p.add_argument("--gitlab-host", help="ex.: gitlab.empresa.com.br")
+    p.add_argument("--alvos", help="módulo promover: as bases depois da --base, em ordem (ex.: staging,main)")
     p.add_argument("--forcar", action="store_true")
     p.set_defaults(fn=cmd_init)
 

@@ -28,20 +28,23 @@ depois do E2E.
    usuário e peça aprovação ({{pergunte}}). Com a aprovação:
 <!-- se forge:github -->
    ```bash
-   gh pr create --base {{git.base}} --head <branch> --title "<título>" --body-file <arquivo com a descrição>
+   gh pr create --base {{git.base}} --head '<branch>' --title "$(cat "{{dados_sh}}/tmp/<id>-<repo>.titulo")" \
+     --body-file "{{dados_sh}}/tmp/<id>-<repo>.md"
    ```
 <!-- senao -->
    ```bash
-   glab mr create --target-branch {{git.base}} --source-branch <branch> --title "<título>" \
-     --description "$(cat <arquivo com a descrição>)" --remove-source-branch=false
+   ( cd "<worktree>" && glab mr create --target-branch {{git.base}} --source-branch '<branch>' \
+       --title "$(cat "{{dados_sh}}/tmp/<id>-<repo>.titulo")" \
+       --description "$(cat "{{dados_sh}}/tmp/<id>-<repo>.md")" )
    ```
+   O `cd` (num subshell) faz o `glab` achar o host pelo remote.
    Sem o `glab`: `git push -o merge_request.create -o merge_request.target={{git.base}} origin <branch>`,
    e a descrição vai à mão.
 <!-- fim -->
-   Escreva a descrição com a ferramenta de escrever arquivos em `{{dados_sh}}/tmp/<id>-descricao.md`
-   (caminho expandido, fora do worktree), nunca entre aspas no shell: crase e `$(…)` digitados entre
-   aspas duplas viram comando. (O `"$(cat arquivo)"` acima é seguro: o shell não reexecuta o que o
-   `cat` devolve.)
+   Escreva o título e a descrição com a ferramenta de escrever arquivos em
+   `{{dados_sh}}/tmp/<id>-<repo>.titulo` e `.md` (caminho expandido, fora do worktree), nunca entre
+   aspas no shell: crase e `$(…)` digitados entre aspas duplas viram comando. (O `"$(cat arquivo)"`
+   acima é seguro: o shell não reexecuta o que o `cat` devolve.)
 <!-- se modulo:mensagens -->
 4. **Aviso ao time:** siga a skill `/aviso` (tom do usuário, aprovação, cópia para a área de
    transferência), com o link da {{forge.pr}} e uma linha sobre o que muda. **Nada é enviado** por você.
@@ -53,7 +56,10 @@ depois do E2E.
 5. **Limpeza.** `docker compose -p <repo>-<id> down -v` nos stacks desta tarefa (confira o nome com
    `docker compose ls`: nunca derrube o projeto do seu ambiente de dev). Remova os worktrees
    (`git worktree remove`) depois de conferir que cada um está limpo e sem commits à frente do remoto.
-   A branch continua no repo e no remoto.
+   Se a {{forge.pr}} já foi mergeada e o forge apagou a branch remota, compare o `git rev-parse HEAD`
+   do worktree com o último commit da {{forge.pr}} mergeada (no merge por squash, os commits não
+   aparecem iguais na `{{git.base}}`): sendo o mesmo, nada se perde. A branch local continua no clone. A
+   remota segue o padrão do projeto.
 6. **Feche o plano** (`{{dados}}/planos/<id>.md`):
    - troque o `status` para `concluido`;
    - acrescente `## Resumo`, com o que foi feito, as divergências do plano, os links da {{forge.pr}},

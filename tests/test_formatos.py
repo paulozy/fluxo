@@ -90,6 +90,7 @@ class Formatos(unittest.TestCase):
         concluir = copilot[".copilot/skills/concluir/SKILL.md"]
         self.assertIn("glab mr create", concluir)
         self.assertNotIn("gh pr create", concluir)
+        self.assertNotIn("--remove-source-branch", concluir)  # apagar a branch no merge é decisão do projeto
         feedback = copilot[".copilot/skills/pr-feedback/SKILL.md"]
         self.assertIn("glab api --hostname gitlab.exemplo.com", feedback)
         self.assertNotIn("gh api", feedback)
@@ -117,6 +118,14 @@ class Formatos(unittest.TestCase):
                             self.assertNotRegex(linha, r"`gh |\bgh (api|pr)\b")
                         else:
                             self.assertNotIn("glab", linha)
+                        if re.search(r"\bgit\b.*\bpush\b", linha):  # push sem força, nunca numa base
+                            self.assertNotRegex(linha, r"--force|\s-f\b|\s\+\S")
+                        # branch nova a partir de uma base sempre com --no-track (sem ele, o git sugere push na
+                        # base); a partir da própria branch remota (o /pr-feedback), rastrear é o certo
+                        if "worktree add" in linha and " -b " in linha and "'origin/<branch>'" not in linha:
+                            self.assertIn("--no-track", linha)
+                        if "glab mr " in linha and "glab mr create" in linha:
+                            self.assertRegex(linha, r"cd |-R https://")  # o host vem do remote ou da URL
 
     def test_gitlab_sem_host_e_recusado(self):
         with self.assertRaisesRegex(montar.ErroMontagem, "gitlab.host está vazio"):
@@ -128,6 +137,29 @@ class Formatos(unittest.TestCase):
             concluir = next(t for rel, t in gerado.items() if rel.endswith("skills/concluir/SKILL.md"))
             self.assertLess(concluir.index("/revisar-pr"), concluir.index("1. **Resumo"))
             self.assertLess(concluir.index("/revisar-pr"), concluir.index("Push da branch"))
+
+    def test_promover(self):
+        tudo, _ = gerar("copilot-tudo")
+        skill = tudo[".copilot/skills/promover/SKILL.md"]
+        self.assertIn("(staging, main)", skill)
+        self.assertNotIn("homolog", skill)  # as bases vêm da config, não do fluxo de origem
+        self.assertIn("(normalmente `main`)", skill)  # o último alvo leva os testes
+        self.assertLess(skill.index("Mostre antes de publicar"), skill.index("glab mr create"))
+        self.assertIn("<id>-<repo>-<alvo>.md", skill)  # dois repos não dividem o arquivo da descrição
+        self.assertIn('--title "$(cat ', skill)  # o título original (de outra pessoa) vai por arquivo
+        self.assertIn("Siga a skill `/aviso`", skill)
+        self.assertIn("merge-requests/<iid>/head", skill)
+        instr = tudo[".copilot/instructions/fluxo.instructions.md"]
+        self.assertIn("## Depois do QA: promoção para staging, main", instr)
+        claude, _ = gerar("claude-promover")
+        gh = claude[".claude/skills/promover/SKILL.md"]
+        self.assertIn("(main)", gh)  # o padrão
+        self.assertIn("pull/<N>/head", gh)
+        self.assertNotIn("/aviso", gh)  # sem o módulo mensagens: o rascunho
+        self.assertIn("Monte um rascunho", gh)
+        sem, _ = gerar("copilot")
+        self.assertNotIn(".copilot/skills/promover/SKILL.md", sem)
+        self.assertNotIn("Depois do QA", sem[".copilot/instructions/fluxo.instructions.md"])
 
     def test_revisor_ligado(self):
         tudo, _ = gerar("copilot-tudo")

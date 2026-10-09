@@ -25,18 +25,22 @@ depois do E2E.
    descrição no padrão do repo: o que mudou, por quê, como testar. Sem assinatura de IA. Mostre ao
    usuário e peça aprovação (use a ferramenta AskUserQuestion e espere a resposta). Com a aprovação:
    ```bash
-   gh pr create --base develop --head <branch> --title "<título>" --body-file <arquivo com a descrição>
+   gh pr create --base develop --head '<branch>' --title "$(cat "$HOME/.local/share/fluxo/tmp/<id>-<repo>.titulo")" \
+     --body-file "$HOME/.local/share/fluxo/tmp/<id>-<repo>.md"
    ```
-   Escreva a descrição com a ferramenta de escrever arquivos em `$HOME/.local/share/fluxo/tmp/<id>-descricao.md`
-   (caminho expandido, fora do worktree), nunca entre aspas no shell: crase e `$(…)` digitados entre
-   aspas duplas viram comando. (O `"$(cat arquivo)"` acima é seguro: o shell não reexecuta o que o
-   `cat` devolve.)
+   Escreva o título e a descrição com a ferramenta de escrever arquivos em
+   `$HOME/.local/share/fluxo/tmp/<id>-<repo>.titulo` e `.md` (caminho expandido, fora do worktree), nunca entre
+   aspas no shell: crase e `$(…)` digitados entre aspas duplas viram comando. (O `"$(cat arquivo)"`
+   acima é seguro: o shell não reexecuta o que o `cat` devolve.)
 4. **Aviso ao time:** siga a skill `/aviso` (tom do usuário, aprovação, cópia para a área de
    transferência), com o link da PR e uma linha sobre o que muda. **Nada é enviado** por você.
 5. **Limpeza.** `docker compose -p <repo>-<id> down -v` nos stacks desta tarefa (confira o nome com
    `docker compose ls`: nunca derrube o projeto do seu ambiente de dev). Remova os worktrees
    (`git worktree remove`) depois de conferir que cada um está limpo e sem commits à frente do remoto.
-   A branch continua no repo e no remoto.
+   Se a PR já foi mergeada e o forge apagou a branch remota, compare o `git rev-parse HEAD`
+   do worktree com o último commit da PR mergeada (no merge por squash, os commits não
+   aparecem iguais na `develop`): sendo o mesmo, nada se perde. A branch local continua no clone. A
+   remota segue o padrão do projeto.
 6. **Feche o plano** (`~/.local/share/fluxo/planos/<id>.md`):
    - troque o `status` para `concluido`;
    - acrescente `## Resumo`, com o que foi feito, as divergências do plano, os links da PR,

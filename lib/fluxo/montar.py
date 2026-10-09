@@ -57,6 +57,8 @@ def contexto(cfg, raiz, caminhos):
     ctx = {"forge": forge, "git": {"base": cfg["git"]["base"]}, "codigo_dir": cfg["codigo_dir"],
            "dados": caminhos.exibir(caminhos.dados), "dados_sh": caminhos.exibir(caminhos.dados, shell=True),
            "config": caminhos.exibir(caminhos.config_dir), "config_sh": caminhos.exibir(caminhos.config_dir, shell=True),
+           "promover": {"alvos": ", ".join(map(str, cfg["promover"]["alvos"] or ["main"])),
+                        "ultimo": str((cfg["promover"]["alvos"] or ["main"])[-1])},
            "ferramenta": {"nome": adapt["nome"]}}
     ctx.update(adapt["vars"])
     return adapt, ctx, eixos, validos

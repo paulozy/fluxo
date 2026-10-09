@@ -5,6 +5,7 @@ A config é JSON, e não TOML, porque o Python 3.9 do Mac não tem `tomllib`.
 import json
 import os
 import platform
+import re
 from pathlib import Path
 
 EIXOS = {
@@ -16,6 +17,7 @@ EIXOS = {
 }
 MOTORES = ("v2", "v3")  # Kiro CLI: o V2 é o padrão do 2.x; o V3 entra com --v3
 NIVEIS = ("forte", "medio", "leve")  # modelo abstrato dos agentes
+BRANCH = re.compile(r"[A-Za-z0-9][A-Za-z0-9._/-]*")  # nome de branch simples: sem espaço nem caractere de shell
 
 PADRAO = {
     "versao": 1,
@@ -27,6 +29,7 @@ PADRAO = {
     "modelos": {},
     "task": {"max": 2},
     "vigia": {"intervalo": 300},
+    "promover": {"alvos": ["main"]},  # as bases depois da git.base, em ordem (ex.: staging, main)
 }
 
 
@@ -127,6 +130,20 @@ def validar(cfg, modulos_existentes=()):
         out["vigia"] = dict(PADRAO["vigia"], **vigia)
         if not isinstance(out["vigia"]["intervalo"], int) or out["vigia"]["intervalo"] < 60:
             problemas.append("vigia.intervalo: segundos entre as passadas (60 ou mais)")
+    promover = out.get("promover")
+    if not isinstance(promover, dict):
+        problemas.append("promover precisa ser um objeto")
+    else:
+        out["promover"] = dict(PADRAO["promover"], **promover)
+        alvos = out["promover"]["alvos"]
+        ligado = isinstance(out.get("modulos"), list) and "promover" in out["modulos"]
+        # o formato vale sempre (vira texto das skills e argumento de git); só "sem a própria base" depende
+        # do módulo ligado, porque o padrão ["main"] conflita com quem usa a main como base
+        if (not isinstance(alvos, list) or not alvos or not all(isinstance(a, str) and BRANCH.fullmatch(a) for a in alvos)
+                or len(set(alvos)) != len(alvos)):
+            problemas.append('promover.alvos: lista de nomes de branch, em ordem, sem repetir (ex.: ["staging", "main"])')
+        elif ligado and (out.get("git") or {}).get("base") in alvos:
+            problemas.append("promover.alvos não pode incluir a própria git.base")
     modelos = out.get("modelos")
     if not isinstance(modelos, dict) or any(k not in NIVEIS or not isinstance(v, str) for k, v in modelos.items()):
         problemas.append(f"modelos: um objeto com {', '.join(NIVEIS)} → nome do modelo na ferramenta")

@@ -70,6 +70,14 @@ Toda feature segue estas fases, em ordem, sem pular nenhuma.
    que o projeto já mantém, a PR (com a sua aprovação), o rascunho do aviso ao time, a
    limpeza e o fechamento do plano.
 
+## Depois do QA: promoção para main
+
+- Quando o usuário disser que o QA aprovou uma tarefa, siga a skill `/promover` com o `<id>` dela. Ela
+  leva os commits que entraram na `develop` para main, por cherry-pick, com uma
+  PR por base.
+- O merge dessas PRs é sempre do usuário ou do time. A de `main` vai para
+  produção.
+
 ## Sessões paralelas (`fluxo task`)
 
 - Para abrir outra sessão sem sair desta (uma tarefa paralela, ou uma sessão dedicada a algo longo),

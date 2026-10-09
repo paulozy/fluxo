@@ -43,7 +43,7 @@ def _rodar(run, argv, timeout=60):
 
 GH_QUERY = """query($after: String, $estados: [PullRequestState!]) { viewer { login pullRequests(first: 30,
   after: $after, states: $estados, orderBy: {field: UPDATED_AT, direction: DESC}) { pageInfo { hasNextPage endCursor }
-  nodes { number title url state mergedAt updatedAt headRefOid repository { nameWithOwner }
+  nodes { number title url state mergedAt updatedAt headRefOid repository { nameWithOwner isArchived }
     reviews(last: 30) { nodes { id state body submittedAt author { login __typename } commit { oid } } }
     reviewThreads(first: 50) { nodes { isResolved comments(last: 1) { nodes { id createdAt author { login __typename } } } } }
     comments(last: 30) { nodes { id createdAt author { login __typename } } }
@@ -81,6 +81,8 @@ class GitHub:
         for estado, maximo in (("OPEN", self.paginas_abertas), ("MERGED", 1)):
             for login, nos in self._paginas(estado, maximo):
                 for n in nos:
+                    if (n.get("repository") or {}).get("isArchived"):
+                        continue  # repo arquivado é só leitura: a PR nunca muda nem fecha, e só enchia a conta
                     pr = self._normalizar(n)
                     if pr["ref"] not in vistas:
                         vistas.add(pr["ref"])
@@ -147,14 +149,19 @@ class GitLab:
         """(login, [MR normalizada]). `abertas_antes`: refs que o vigia viu abertas; a que sumiu da lista
         é buscada para saber se foi mergeada."""
         login = (self.api("user") or {}).get("username")
-        lista = self.api("merge_requests?scope=created_by_me&state=opened&per_page=50") or []
+        # non_archived: no endpoint global o padrão é false, e MR de projeto arquivado nunca fecha
+        lista = self.api("merge_requests?scope=created_by_me&state=opened&non_archived=true&per_page=50") or []
         mrs = [self._detalhar(m["project_id"], m["iid"]) for m in lista]
         vistas = {m["ref"] for m in mrs}
         for ref in abertas_antes:
             if ref not in vistas and "!" in ref:
                 projeto, iid = ref.rsplit("!", 1)
                 try:
-                    mrs.append(self._detalhar(projeto, iid, so_estado=True))
+                    mr = self._detalhar(projeto, iid, so_estado=True)
+                    # sumiu da lista e continua aberta: o projeto foi arquivado (só leitura); sai da conta
+                    if mr["estado"] == "aberta" and (self.api(f"projects/{quote(str(projeto), safe='')}") or {}).get("archived"):
+                        continue
+                    mrs.append(mr)
                 except ErroForge:  # rede: o vigia guarda a ref e tenta de novo, senão o merge se perde
                     mrs.append({"ref": ref, "titulo": "", "url": None, "estado": "desconhecida", "merged_em": None,
                                 "sha": None, "ci": None, "aprovacoes": [], "falas": [], "versao_em": None})

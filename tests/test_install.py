@@ -253,6 +253,12 @@ class Install(unittest.TestCase):
         code, _, err = rodar("init", "--home", str(self.home), "--ferramenta", "kiro", "--forge", "github")
         self.assertEqual(code, 2)
         self.assertIn("--forcar", err)
+        rodar("modulos", "--home", str(self.home), "--ligar", "vigia", "revisor")
+        rodar("init", "--home", str(self.home), "--ferramenta", "kiro", "--forge", "github", "--forcar",
+              "--alvos", "staging, main")
+        cfg = config.carregar(config.Caminhos(home=self.home), montar.modulos_existentes(RAIZ))
+        self.assertEqual(cfg["promover"]["alvos"], ["staging", "main"])
+        self.assertEqual(cfg["modulos"], ["vigia", "revisor"])  # o --forcar não apaga os módulos ligados
 
     def test_skill_quebrada_vira_erro_curto(self):
         raiz = self.home / "repo"

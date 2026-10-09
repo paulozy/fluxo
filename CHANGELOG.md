@@ -1,5 +1,34 @@
 # Changelog
 
+## [0.4.0] — 2026-10-09
+
+### Adicionado
+
+- **Módulo `promover`:** a skill `/promover <id>` (a versão genérica da daqui) e a seção "Depois do QA"
+  nas instruções.
+  - Leva os commits que entraram na base para as bases de `promover.alvos` (ex.: staging e main), em
+    branches `<head>-<alvo>` por cherry-pick, com uma PR/MR por base.
+  - Os commits saem da faixa da própria PR/MR: no GitLab, `merge-requests/<iid>/head` e
+    `diff_refs.base_sha`, que vale para merge, squash e rebase.
+  - Commit vazio é pulado; conflito, teste falhando no último alvo ou PR/MR com outra tarefa param e
+    perguntam.
+  - Mostra títulos e descrições antes do push; o merge é sempre do usuário ou do time.
+  - `fluxo init --alvos staging,main` grava `promover.alvos`, validado só com o módulo ligado.
+
+### Corrigido
+
+- **O vigia não conta mais PR/MR de repositório arquivado:**
+  - GitHub: `repository.isArchived`, agora exigido na query por teste;
+  - GitLab: `non_archived=true` na lista, e a MR que já estava aberta quando o projeto foi arquivado
+    sai da conta.
+- **O `fluxo init --forcar` não apaga mais os módulos ligados** nem as opções deles (`modelos`, `task`,
+  `vigia`, `promover`).
+- **O `/concluir` grava o título da PR/MR em arquivo, como a descrição, e no GitLab roda o `glab mr
+  create` com `cd` no worktree** (o host vem do remote).
+- **O `/concluir` no GitLab não força mais `--remove-source-branch=false`:** apagar a branch no
+  merge segue o padrão do projeto. A limpeza diz como conferir os commits quando a branch remota já
+  foi apagada.
+
 ## [0.3.0] — 2026-10-09
 
 As fases 3, 4 e 5 do plano, numa versão só: revisor lite, vigia e painel.

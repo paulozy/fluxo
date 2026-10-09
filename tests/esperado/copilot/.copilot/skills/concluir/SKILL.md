@@ -20,22 +20,27 @@ existem os links.
    descrição no padrão do repo: o que mudou, por quê, como testar. Sem assinatura de IA. Mostre ao
    usuário e peça aprovação (faça a pergunta na conversa e pare o turno até a resposta). Com a aprovação:
    ```bash
-   glab mr create --target-branch develop --source-branch <branch> --title "<título>" \
-     --description "$(cat <arquivo com a descrição>)" --remove-source-branch=false
+   ( cd "<worktree>" && glab mr create --target-branch develop --source-branch '<branch>' \
+       --title "$(cat "$HOME/.local/share/fluxo/tmp/<id>-<repo>.titulo")" \
+       --description "$(cat "$HOME/.local/share/fluxo/tmp/<id>-<repo>.md")" )
    ```
+   O `cd` (num subshell) faz o `glab` achar o host pelo remote.
    Sem o `glab`: `git push -o merge_request.create -o merge_request.target=develop origin <branch>`,
    e a descrição vai à mão.
-   Escreva a descrição com a ferramenta de escrever arquivos em `$HOME/.local/share/fluxo/tmp/<id>-descricao.md`
-   (caminho expandido, fora do worktree), nunca entre aspas no shell: crase e `$(…)` digitados entre
-   aspas duplas viram comando. (O `"$(cat arquivo)"` acima é seguro: o shell não reexecuta o que o
-   `cat` devolve.)
+   Escreva o título e a descrição com a ferramenta de escrever arquivos em
+   `$HOME/.local/share/fluxo/tmp/<id>-<repo>.titulo` e `.md` (caminho expandido, fora do worktree), nunca entre
+   aspas no shell: crase e `$(…)` digitados entre aspas duplas viram comando. (O `"$(cat arquivo)"`
+   acima é seguro: o shell não reexecuta o que o `cat` devolve.)
 4. **Rascunho do aviso ao time.** Uma mensagem curta, no tom do usuário (informal, direto, sem
    formato de e-mail), com o link da MR e uma linha sobre o que muda. Mostre na conversa,
    pronta para copiar. **Nada é enviado** por você.
 5. **Limpeza.** `docker compose -p <repo>-<id> down -v` nos stacks desta tarefa (confira o nome com
    `docker compose ls`: nunca derrube o projeto do seu ambiente de dev). Remova os worktrees
    (`git worktree remove`) depois de conferir que cada um está limpo e sem commits à frente do remoto.
-   A branch continua no repo e no remoto.
+   Se a MR já foi mergeada e o forge apagou a branch remota, compare o `git rev-parse HEAD`
+   do worktree com o último commit da MR mergeada (no merge por squash, os commits não
+   aparecem iguais na `develop`): sendo o mesmo, nada se perde. A branch local continua no clone. A
+   remota segue o padrão do projeto.
 6. **Feche o plano** (`~/.local/share/fluxo/planos/<id>.md`):
    - troque o `status` para `concluido`;
    - acrescente `## Resumo`, com o que foi feito, as divergências do plano, os links da MR,

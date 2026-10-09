@@ -96,6 +96,20 @@ class Config(unittest.TestCase):
         with self.assertRaisesRegex(config.ErroConfig, "motor"):
             config.validar({"versao": 1, "ferramenta": "kiro", "forge": "github", "so": "wsl", "kiro": {"motor": "v9"}})
 
+    def test_promover_alvos(self):
+        base = {"versao": 1, "ferramenta": "kiro", "forge": "github", "so": "wsl"}
+        self.assertEqual(config.validar(base)["promover"]["alvos"], ["main"])
+        self.assertEqual(config.validar(dict(base, git={"base": "main"}))["git"]["base"], "main")  # desligado: não confere
+        ligado = dict(base, modulos=["promover"])
+        self.assertEqual(config.validar(dict(ligado, promover={"alvos": ["staging", "main"]}), ("promover",))
+                         ["promover"]["alvos"], ["staging", "main"])
+        for alvos in ([], ["main", "main"], ["develop", "main"], "main", [""], ["main "], ["ma in"], ["main;id"], 5):
+            with self.subTest(alvos=alvos), self.assertRaisesRegex(config.ErroConfig, "promover.alvos"):
+                config.validar(dict(ligado, promover={"alvos": alvos}), ("promover",))
+        for alvos in (5, ["ma in"]):  # o formato vale mesmo com o módulo desligado (o install usa o texto)
+            with self.subTest(desligado=alvos), self.assertRaisesRegex(config.ErroConfig, "promover.alvos"):
+                config.validar(dict(base, promover={"alvos": alvos}))
+
     def test_detectar_so(self):
         self.assertEqual(config.detectar_so("Darwin"), "mac")
         self.assertEqual(config.detectar_so("Linux", "Linux version 5.15.0-microsoft-standard-WSL2"), "wsl")

@@ -17,9 +17,10 @@ def iso(ts):
     return datetime.datetime.fromtimestamp(ts, datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def pr_gh(n=1, sha="a1", state="OPEN", reviews=(), threads=(), comments=(), ci="SUCCESS", merged=None):
+def pr_gh(n=1, sha="a1", state="OPEN", reviews=(), threads=(), comments=(), ci="SUCCESS", merged=None, arquivado=False):
     return {"number": n, "title": f"PR {n}", "url": f"https://github.com/o/r/pull/{n}", "state": state,
-            "mergedAt": merged, "updatedAt": iso(T0), "headRefOid": sha, "repository": {"nameWithOwner": "o/r"},
+            "mergedAt": merged, "updatedAt": iso(T0), "headRefOid": sha,
+            "repository": {"nameWithOwner": "o/r", "isArchived": arquivado},
             "reviews": {"nodes": list(reviews)}, "reviewThreads": {"nodes": list(threads)},
             "comments": {"nodes": list(comments)},
             "commits": {"nodes": [{"commit": {"oid": sha, "statusCheckRollup": {"state": ci} if ci else None}}]}}
@@ -67,7 +68,7 @@ class Normalizar(unittest.TestCase):
     def test_gitlab(self):
         respostas = {
             "user": {"username": "eu"},
-            "merge_requests?scope=created_by_me&state=opened&per_page=50": [{"project_id": 7, "iid": 3}],
+            "merge_requests?scope=created_by_me&state=opened&non_archived=true&per_page=50": [{"project_id": 7, "iid": 3}],
             "projects/7/merge_requests/3": {"title": "MR 3", "web_url": "https://g/x/-/merge_requests/3", "state": "opened",
                                             "sha": "c3", "references": {"full": "grupo/proj!3"},
                                             "head_pipeline": {"sha": "c3", "status": "failed"}},
@@ -119,6 +120,56 @@ class Consultas(unittest.TestCase):
         login, prs = forge.GitHub(run=run).coletar()
         self.assertEqual(pedidos, ["OPEN", "MERGED"])
         self.assertEqual([(p["ref"], p["estado"]) for p in prs], [("o/r#1", "aberta"), ("o/r#2", "mergeada")])
+
+
+class Arquivados(unittest.TestCase):
+    """Repo/projeto arquivado é só leitura: a PR/MR nunca muda nem fecha, e só enchia a conta."""
+
+    def test_github_filtra_e_pede_o_campo(self):
+        consultas = []
+
+        def run(argv, **kw):
+            consultas.append([a for a in argv if a.startswith("query=")][0])
+            return subprocess.CompletedProcess(argv, 0, resposta_gh(pr_gh(n=5, arquivado=True), pr_gh(n=6)), "")
+
+        _, prs = forge.GitHub(run=run).coletar()
+        self.assertEqual([p["ref"] for p in prs], ["o/r#6"])
+        self.assertTrue(all("isArchived" in q for q in consultas))  # sem o campo na query, o filtro não vê nada
+
+    def test_gitlab_pede_non_archived_e_descarta_o_que_foi_arquivado(self):
+        caminhos = []
+
+        def run(argv, **kw):
+            caminho = argv[4]
+            caminhos.append(caminho)
+            respostas = {
+                "user": {"username": "eu"},
+                "projects/g%2Fvelho/merge_requests/2": {"state": "opened", "title": "x", "sha": "s",
+                                                        "references": {"full": "g/velho!2"}},
+                "projects/g%2Fvelho": {"archived": True},
+            }
+            if caminho.startswith("merge_requests?"):
+                return subprocess.CompletedProcess(argv, 0, "[]", "")
+            return subprocess.CompletedProcess(argv, 0, json.dumps(respostas[caminho]), "")
+
+        _, mrs = forge.GitLab("h", run=run).coletar(abertas_antes=["g/velho!2"])
+        self.assertEqual(mrs, [])  # o projeto foi arquivado com a MR aberta: sai de vez
+        self.assertIn("non_archived=true", [c for c in caminhos if c.startswith("merge_requests?")][0])
+
+    def test_gitlab_mr_aberta_de_projeto_ativo_continua(self):
+        """Ela some da lista quando há mais de 50 abertas (a lista é uma página): não pode sair da conta."""
+        def run(argv, **kw):
+            respostas = {"user": {"username": "eu"},
+                         "projects/g%2Fativo/merge_requests/2": {"state": "opened", "title": "x", "sha": "s",
+                                                                 "references": {"full": "g/ativo!2"}},
+                         "projects/g%2Fativo": {"archived": False}}
+            caminho = argv[4]
+            if caminho.startswith("merge_requests?"):
+                return subprocess.CompletedProcess(argv, 0, "[]", "")
+            return subprocess.CompletedProcess(argv, 0, json.dumps(respostas[caminho]), "")
+
+        _, mrs = forge.GitLab("h", run=run).coletar(abertas_antes=["g/ativo!2"])
+        self.assertEqual([(m["ref"], m["estado"]) for m in mrs], [("g/ativo!2", "aberta")])
 
 
 class Eventos(unittest.TestCase):

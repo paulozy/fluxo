@@ -16,7 +16,8 @@ empresa**.
 ```bash
 git clone git@github.com:paulozy/fluxo.git ~/fluxo   # ou o zip, veja abaixo
 cd ~/fluxo
-./fluxo init --ferramenta copilot --forge gitlab --gitlab-host gitlab.empresa.com --codigo-dir ~/code
+./fluxo init --ferramenta copilot --forge gitlab --gitlab-host gitlab.empresa.com --codigo-dir ~/code \
+  --alvos staging,main     # só para o módulo promover: as bases depois da develop
 ./fluxo install --dry-run     # mostra o que vai gravar
 ./fluxo install
 fluxo doctor                  # o install cria ~/.local/bin/fluxo
@@ -67,6 +68,7 @@ e lembra de rodar `fluxo install`.
 | `trava` | `fluxo trava pegar/soltar/status/quebrar/rodar`: uma sessão por vez no stack local. O E2E das instruções passa a usar. | tmux (para saber se o dono vive) |
 | `vigia` | `fluxo vigia tick` lê as suas PRs (GitHub) ou MRs (GitLab) e avisa na área de trabalho: review ou comentário novo, aprovação no commit atual, CI que quebrou ou passou, merge. Só avisa. `fluxo vigia ligar` agenda: launchd no Mac, systemd no Linux, uma janela do tmux no WSL. `fluxo vigia` mostra o status. | `gh` ou `glab` logado |
 | `painel` | `fluxo painel`: as sessões da ferramenta ao vivo (trabalhando, sua vez, pergunta, parada), com Enter levando até a sessão no tmux. Os hooks vão para `~/.copilot/hooks` ou `~/.kiro/hooks`; no Kiro V2, um agente `fluxo` vira o padrão (`fluxo painel ligar`). Só Copilot e Kiro: no Claude o painel é o agent-tree. | tmux |
+| `promover` | skill `/promover <id>`: depois do QA, leva os commits que entraram na base para as bases seguintes (`promover.alvos`, ex.: staging e main), por cherry-pick, com uma PR/MR por base. Mostra tudo antes de publicar; o merge é sempre seu ou do time. | — |
 | `revisor` | skill `/revisar-pr` e o agente `verificador`: duas revisões isoladas (`code-reviewer` + diff contra o plano), relatório com veredito (REPROVAR, PRECISA DE HUMANO, APROVÁVEL) em `~/.local/share/fluxo/revisoes/`. O `/concluir` roda antes de abrir a PR/MR. | — |
 
 - **Comando de abertura de cada ferramenta:** fica em `adaptadores/ferramenta/*.json` (`lancar`). Se o

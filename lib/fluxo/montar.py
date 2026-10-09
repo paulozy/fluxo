@@ -2,6 +2,7 @@
 
 É uma função pura: lê as fontes do repo e devolve (arquivos, avisos). Quem grava é o `instalar`.
 """
+import importlib
 import json
 import shlex
 from dataclasses import dataclass
@@ -53,6 +54,7 @@ def contexto(cfg, raiz, caminhos):
     validos = dict(cfgmod.EIXOS, motor=cfgmod.MOTORES, modulo=modulos_existentes(raiz))
     ctx = {"forge": forge, "git": {"base": cfg["git"]["base"]}, "codigo_dir": cfg["codigo_dir"],
            "dados": caminhos.exibir(caminhos.dados), "dados_sh": caminhos.exibir(caminhos.dados, shell=True),
+           "config": caminhos.exibir(caminhos.config_dir), "config_sh": caminhos.exibir(caminhos.config_dir, shell=True),
            "ferramenta": {"nome": adapt["nome"]}}
     ctx.update(adapt["vars"])
     return adapt, ctx, eixos, validos
@@ -84,6 +86,11 @@ def montar(cfg, raiz, caminhos):
 
     def tpl(texto, onde):
         return render.renderizar(texto, ctx, eixos, validos, onde)
+
+    for m in cfg["modulos"]:
+        meta = _json(raiz / "modulos" / m / "modulo.json")
+        if meta.get("requer") and not render.condicao(meta["requer"], eixos, validos, f"modulos/{m}/modulo.json"):
+            raise ErroMontagem(f"o módulo {m} requer {meta['requer']}, e esta config não atende")
 
     agentes = []
     for pasta in _pastas(raiz, cfg, "agentes"):
@@ -132,6 +139,17 @@ def montar(cfg, raiz, caminhos):
                  for a in agentes]
     arquivos += [rend.skill(s, Arquivo) for s in skills]
     arquivos.append(wrapper(raiz))
+    for m in cfg["modulos"]:  # arquivos fixos de um módulo (plist do vigia, hooks do painel)
+        try:
+            codigo = importlib.import_module(f"fluxo.{m}")
+        except ModuleNotFoundError as exc:
+            if exc.name != f"fluxo.{m}":  # o módulo existe, mas importa algo que falta: é bug
+                raise
+            continue
+        if hasattr(codigo, "arquivos_extras"):
+            extras, mais_avisos = codigo.arquivos_extras(cfg, ctx, Arquivo, agentes=agentes, skills=skills)
+            arquivos += extras
+            avisos += mais_avisos
     vistos = set()
     for a in arquivos:
         if a.rel in vistos:

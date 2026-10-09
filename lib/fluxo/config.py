@@ -25,6 +25,8 @@ PADRAO = {
     "git": {"base": "develop"},
     "codigo_dir": "~/code",
     "modelos": {},
+    "task": {"max": 2},
+    "vigia": {"intervalo": 300},
 }
 
 
@@ -50,6 +52,7 @@ class Caminhos:
             self.dados = Path(env.get("XDG_DATA_HOME") or self.home / ".local" / "share") / "fluxo"
         self.config = self.config_dir / "config.json"
         self.manifesto = self.dados / "manifesto.json"
+        self.estado = self.dados / "estado"  # o que os módulos gravam rodando: tasks, trava, vigia, eventos
 
     def exibir(self, caminho, shell=False):
         """O caminho como as instruções mostram: com ~ (ou $HOME, para comando de shell) quando fica no
@@ -96,6 +99,8 @@ def validar(cfg, modulos_existentes=()):
     if not isinstance(out.get("modulos"), list):
         problemas.append("modulos precisa ser uma lista")
     else:
+        if len(set(out["modulos"])) != len(out["modulos"]):
+            problemas.append("modulos tem repetição")
         for m in out["modulos"]:
             if m not in modulos_existentes:
                 problemas.append(f"módulo {m!r} não existe" + (f" (há: {', '.join(modulos_existentes)})"
@@ -105,6 +110,23 @@ def validar(cfg, modulos_existentes=()):
         problemas.append("git.base precisa ser o nome da branch de desenvolvimento (ex.: develop)")
     if not isinstance(out.get("codigo_dir"), str) or not out["codigo_dir"].strip():
         problemas.append("codigo_dir precisa ser a pasta dos clones (ex.: ~/code)")
+    task = out.get("task")
+    if not isinstance(task, dict):
+        problemas.append("task precisa ser um objeto")
+    else:
+        out["task"] = dict(PADRAO["task"], **task)
+        if not isinstance(out["task"]["max"], int) or out["task"]["max"] < 1:
+            problemas.append("task.max: número de tarefas com ID ao mesmo tempo (1 ou mais)")
+        lancar = out["task"].get("lancar")
+        if lancar is not None and (not isinstance(lancar, list) or not lancar or not all(isinstance(a, str) for a in lancar)):
+            problemas.append('task.lancar: lista de strings, com {nome}, {uuid} e {prompt} (ex.: ["copilot", "-i", "{prompt}"])')
+    vigia = out.get("vigia")
+    if not isinstance(vigia, dict):
+        problemas.append("vigia precisa ser um objeto")
+    else:
+        out["vigia"] = dict(PADRAO["vigia"], **vigia)
+        if not isinstance(out["vigia"]["intervalo"], int) or out["vigia"]["intervalo"] < 60:
+            problemas.append("vigia.intervalo: segundos entre as passadas (60 ou mais)")
     modelos = out.get("modelos")
     if not isinstance(modelos, dict) or any(k not in NIVEIS or not isinstance(v, str) for k, v in modelos.items()):
         problemas.append(f"modelos: um objeto com {', '.join(NIVEIS)} → nome do modelo na ferramenta")

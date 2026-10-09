@@ -4,17 +4,135 @@ Saídas: 0 ok; 1 erro; 2 config ou uso inválido; 3 conflito (nada foi gravado).
 """
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
 from . import config as cfgmod
-from . import doctor, empacotar, fonte, instalar, montar, render, varredura
+from . import doctor, empacotar, fonte, instalar, mensagens, montar, render, task, trava, varredura
 
 ERROS_DE_USO = (cfgmod.ErroConfig, montar.ErroMontagem, render.ErroTemplate, fonte.ErroFonte)
 
 
 def _caminhos(args):
     return cfgmod.Caminhos(home=getattr(args, "home", None))
+
+
+def _carregar(args, raiz, modulo=None):
+    cam = _caminhos(args)
+    cfg = cfgmod.carregar(cam, montar.modulos_existentes(raiz))
+    if modulo and modulo not in cfg["modulos"]:
+        raise cfgmod.ErroConfig(f"o módulo {modulo} está desligado: fluxo modulos --ligar {modulo} && fluxo install")
+    return cam, cfg
+
+
+def _adaptador(raiz, cfg):
+    return json.loads((Path(raiz) / "adaptadores" / "ferramenta" / f"{cfg['ferramenta']}.json").read_text(encoding="utf-8"))
+
+
+def cmd_modulos(args, raiz):
+    cam = _caminhos(args)
+    existentes = montar.modulos_existentes(raiz)
+    if args.ligar or args.desligar:
+        try:
+            bruto = json.loads(cam.config.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            raise cfgmod.ErroConfig(f"sem config em {cam.config}: rode `fluxo init` antes")
+        except ValueError as exc:
+            raise cfgmod.ErroConfig(f"{cam.config} não é JSON válido: {exc}")
+        ligados = [m for m in bruto.get("modulos", []) if m not in (args.desligar or [])]
+        ligados = list(dict.fromkeys(ligados + list(args.ligar or [])))  # sem repetir: duplicaria as instruções
+        bruto["modulos"] = ligados
+        cfgmod.validar(bruto, existentes)  # módulo inexistente não chega ao arquivo
+        tmp = cam.config.with_name(".config.json.tmp")
+        tmp.write_text(json.dumps(bruto, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        os.replace(tmp, cam.config)
+        print(f"módulos ligados: {', '.join(ligados) or 'nenhum'}. Agora: fluxo install")
+        return 0
+    cfg = cfgmod.carregar(cam, existentes)
+    for m in existentes:
+        meta = json.loads((Path(raiz) / "modulos" / m / "modulo.json").read_text(encoding="utf-8"))
+        print(f"  [{'x' if m in cfg['modulos'] else ' '}] {m:<10} {meta.get('descricao', '')}")
+    return 0
+
+
+def cmd_task(args, raiz):
+    cam, cfg = _carregar(args, raiz, "task")
+    if args.lista:
+        return task.listar(cam)
+    pasta = Path(args.dir or os.path.expanduser(cfg["codigo_dir"]))
+    try:
+        return task.abrir(args.id, args.prompt, args.nome, cfg, _adaptador(raiz, cfg), cam, pasta, alvo=args.target,
+                          forcar=args.force, dry_run=args.dry_run, dentro_do_tmux=bool(os.environ.get("TMUX")))
+    except task.ErroUso as exc:
+        print(f"fluxo task: {exc}", file=sys.stderr)
+        return 2
+
+
+def cmd_msg(args, raiz):
+    cam, cfg = _carregar(args, raiz, "mensagens")
+    if args.acao == "tom":
+        destino, criado = mensagens.criar_tom(cam.config_dir)
+        print(f"{'criado' if criado else 'já existe'}: {destino}. Cole ali umas 20 mensagens suas, no fim, em 'Exemplos seus'.")
+        return 0
+    texto = sys.stdin.read() if args.arquivo in (None, "-") else Path(args.arquivo).read_text(encoding="utf-8")
+    if not texto.strip():
+        print("fluxo msg: mensagem vazia", file=sys.stderr)
+        return 2
+    salvo = mensagens.guardar(texto, cam.dados)
+    copiou, como = mensagens.copiar(texto, cfg["so"])
+    if copiou:
+        print(f"copiado ({como}); cópia em {salvo}")
+        return 0
+    print(f"fluxo msg: não copiei ({como}); o texto está em {salvo}", file=sys.stderr)
+    return 1
+
+
+def cmd_trava(args, raiz):
+    cam, cfg = _carregar(args, raiz, "trava")
+    t = trava.Trava(cam.estado)
+    if args.acao == "status":
+        dono = t.ler()
+        print(trava.descrever(dono, bool(dono) and t.vivo(dono)))
+        return 0
+    if args.acao == "quebrar":
+        ok, dono = t.quebrar(forcar=args.forcar)
+        if not ok:
+            print(f"fluxo trava: {trava.descrever(dono, True)}; o dono está vivo (--forcar quebra assim mesmo)", file=sys.stderr)
+            return 1
+        if dono and dono.get("projeto"):
+            print(f"trava quebrada. Se o stack dele ficou de pé: docker compose -p {dono['projeto']} down -v")
+        else:
+            print("trava quebrada" if dono else "a trava já estava livre")
+        return 0
+    pane, pane_pid = trava.pane_atual()
+    try:
+        sessao = trava.quem(args.sessao, pane=pane, pane_pid=pane_pid)
+    except trava.ErroTrava as exc:
+        print(f"fluxo trava: {exc}", file=sys.stderr)
+        return 2
+    if args.acao == "soltar":
+        ok, dono = t.soltar(sessao)
+        if not ok:
+            print(f"fluxo trava: a trava é de outra sessão ({trava.descrever(dono, True)})", file=sys.stderr)
+            return 1
+        print("trava solta" if dono else "a trava já estava livre")
+        return 0
+    pid = int(args.pid) if args.pid else trava.pid_da_ferramenta()
+    kw = dict(sessao=sessao, pane=pane, pane_pid=pane_pid, pid=pid, id_=args.id, projeto=args.projeto)
+    try:
+        if args.acao == "rodar":
+            comando = args.comando
+            if not comando:
+                print("fluxo trava rodar: falta o comando depois de --", file=sys.stderr)
+                return 2
+            return trava.rodar(t, comando, args.esperar, **kw)
+        ok, dono, _ = trava.pegar_esperando(t, args.esperar, **kw)
+    except trava.ErroTrava as exc:
+        print(f"fluxo trava: {exc}", file=sys.stderr)
+        return 2
+    print(("trava sua: " if ok else "") + trava.descrever(dono, True))
+    return 0 if ok else trava.OCUPADA
 
 
 def cmd_init(args, raiz):
@@ -153,17 +271,54 @@ def parser():
     p.add_argument("--saida", help="pasta do zip (padrão: dist/)")
     p.set_defaults(fn=cmd_empacotar)
 
+    p = sub.add_parser("modulos", help="lista os módulos; --ligar/--desligar editam a config")
+    p.add_argument("--ligar", nargs="+", metavar="MODULO")
+    p.add_argument("--desligar", nargs="+", metavar="MODULO")
+    p.set_defaults(fn=cmd_modulos)
+
+    p = sub.add_parser("task", help="abre uma sessão numa janela do tmux (módulo task)")
+    p.add_argument("id", nargs="?", help="ID da tarefa (ex.: a chave do card); sem ID é uma sessão avulsa")
+    p.add_argument("-p", "--prompt", help="prompt inicial (com ID, o padrão é /planejar <ID>)")
+    p.add_argument("-n", "--nome", help="nome da sessão avulsa (padrão: o /comando, ou avulsa)")
+    p.add_argument("--dir", help="pasta da sessão (padrão: codigo_dir)")
+    p.add_argument("--target", help="sessão do tmux onde abrir (ex.: main:); obrigatório fora do tmux")
+    p.add_argument("--force", action="store_true", help="abre mesmo sem vaga")
+    p.add_argument("--dry-run", action="store_true")
+    p.add_argument("--lista", action="store_true", help="lista as sessões vivas abertas pelo fluxo")
+    p.set_defaults(fn=cmd_task)
+
+    p = sub.add_parser("msg", help="copia uma mensagem para a área de transferência (módulo mensagens)")
+    p.add_argument("acao", choices=("copiar", "tom"))
+    p.add_argument("arquivo", nargs="?", help="arquivo com a mensagem (padrão: stdin)")
+    p.set_defaults(fn=cmd_msg)
+
+    p = sub.add_parser("trava", help="uma sessão por vez no stack local (módulo trava)")
+    p.add_argument("acao", choices=("pegar", "soltar", "status", "quebrar", "rodar"))
+    p.add_argument("--id", help="a tarefa que segura a trava")
+    p.add_argument("--projeto", help="o projeto do docker compose (-p), para o quebrar sugerir o down")
+    p.add_argument("--sessao", help="identidade da sessão (padrão: FLUXO_SESSAO, a do Claude, ou o pane)")
+    p.add_argument("--pid", type=int, help="pid da ferramenta (padrão: o CLAUDE_PID, ou o avô deste processo)")
+    p.add_argument("--esperar", type=int, default=0, help="segundos esperando a trava (padrão: só tenta)")
+    p.add_argument("--forcar", action="store_true", help="quebrar: mesmo com o dono vivo")
+    p.set_defaults(fn=cmd_trava)
+
     p = sub.add_parser("varrer", help="procura dado de empresa no repo (o pre-commit roda)")
     p.add_argument("--hash", metavar="TERMO", help="só imprime o hash do termo, para o tests/proibidos.sha256")
     p.set_defaults(fn=cmd_varrer)
 
-    for nome in ("init", "install", "uninstall", "doctor"):
-        sub.choices[nome].add_argument("--home", help="instala dentro desta pasta em vez do HOME (teste)")
+    for nome in ("init", "install", "uninstall", "doctor", "modulos", "task", "msg", "trava"):
+        sub.choices[nome].add_argument("--home", help="usa esta pasta no lugar do HOME para config, dados e "
+                                       "arquivos instalados (teste); o tmux e o ~ do codigo_dir continuam os reais")
     return ap
 
 
 def main(argv, raiz):
+    argv, comando = list(argv), []
+    if argv[:2] == ["trava", "rodar"] and "--" in argv:  # `fluxo trava rodar --id X -- docker compose up`
+        i = argv.index("--")
+        argv, comando = argv[:i], argv[i + 1:]
     args = parser().parse_args(argv)
+    args.comando = comando
     try:
         return args.fn(args, Path(raiz))
     except ERROS_DE_USO as exc:

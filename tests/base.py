@@ -1,10 +1,19 @@
 """Comum aos testes: o lib/ no sys.path e os cenários de config das quatro combinações."""
 import json
+import os
 import sys
+import tempfile
 from pathlib import Path
 
 RAIZ = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(RAIZ / "lib"))
+
+# Nenhum teste fala com o tmux do usuário. Dentro do tmux, a variável TMUX aponta para o servidor dele
+# (em 09/10 um kill-server de teste o derrubou); sem TMUX e sem TMUX_TMPDIR, o tmux cai no socket padrão,
+# que também é o dele. Daqui em diante, qualquer `tmux` dos testes vai para uma pasta vazia.
+os.environ.pop("TMUX", None)
+os.environ.pop("TMUX_PANE", None)
+os.environ["TMUX_TMPDIR"] = os.path.realpath(tempfile.mkdtemp(prefix="fxt", dir="/tmp"))
 
 from fluxo import config as cfgmod  # noqa: E402
 
@@ -13,6 +22,9 @@ CENARIOS = {
     "copilot": {"ferramenta": "copilot", "forge": "gitlab", "so": "mac", "gitlab": {"host": "gitlab.exemplo.com"}},
     "kiro-v2": {"ferramenta": "kiro", "forge": "github", "so": "wsl", "kiro": {"motor": "v2"}},
     "kiro-v3": {"ferramenta": "kiro", "forge": "github", "so": "wsl", "kiro": {"motor": "v3"}},
+    # todos os módulos ligados: cada fase acrescenta os seus
+    "copilot-tudo": {"ferramenta": "copilot", "forge": "gitlab", "so": "mac", "gitlab": {"host": "gitlab.exemplo.com"},
+                     "modulos": ["mensagens", "task", "trava"]},
 }
 PASTAS_FERRAMENTA = (".claude", ".copilot", ".kiro")
 

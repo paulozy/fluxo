@@ -10,7 +10,7 @@ import zipfile
 from pathlib import Path
 
 from base import RAIZ, escrever_config
-from fluxo import cli, config, doctor, empacotar
+from fluxo import cli, config, doctor, empacotar, montar
 
 
 class Resp:
@@ -73,6 +73,24 @@ class Doctor(unittest.TestCase):
         texto = [t for n, t in r if "instalados" in t][0]
         self.assertIn("1 sumiram", texto)
         self.assertIn("1 editados", texto)
+
+    def test_modulos_checam_o_que_precisam(self):
+        cam = escrever_config(self.home, "copilot-tudo")
+        r = doctor.checar(cam, RAIZ, cfg=config.carregar(cam, montar.modulos_existentes(RAIZ)),
+                          which=lambda b: None if b in ("tmux", "pbcopy") else f"/usr/bin/{b}",
+                          run=lambda *a, **k: Resp(0, "1.0\n"), conectar=lambda *a: io.BytesIO(), versao=(3, 9),
+                          env={"PATH": ""})
+        self.assertTrue(any(n == doctor.FALHA and t.startswith("tmux não está") for n, t in r))
+        self.assertTrue(any(n == doctor.AVISO and t.startswith("sem pbcopy") for n, t in r))
+
+    def test_so_a_trava_sem_tmux_e_aviso(self):
+        cam = escrever_config(self.home, "copilot", modulos=["trava"])
+        r = doctor.checar(cam, RAIZ, cfg=config.carregar(cam, montar.modulos_existentes(RAIZ)),
+                          which=lambda b: None if b == "tmux" else f"/usr/bin/{b}",
+                          run=lambda *a, **k: Resp(0, "1.0\n"), conectar=lambda *a: io.BytesIO(), versao=(3, 9),
+                          env={"PATH": ""})
+        self.assertTrue(any(n == doctor.AVISO and t.startswith("tmux não está") for n, t in r))
+        self.assertNotIn(doctor.FALHA, [n for n, _ in r])
 
     def test_sem_config_e_falha(self):
         cam = config.Caminhos(home=self.home)

@@ -26,5 +26,15 @@
   "vars": {
     "argumentos": "o texto que veio junto do comando (se não veio nada, pergunte)",
     "pergunte": "faça a pergunta na conversa e pare o turno até a resposta"
-  }
+  },
+  "lancar": [
+    "copilot",
+    "-n",
+    "{nome}",
+    "--session-id",
+    "{uuid}",
+    "-i",
+    "{prompt}"
+  ],
+  "_lancar": "https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-command-reference (as três flags juntas: a validar)"
 }

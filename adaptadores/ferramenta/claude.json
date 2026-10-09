@@ -32,5 +32,15 @@
   "vars": {
     "argumentos": "$ARGUMENTS",
     "pergunte": "use a ferramenta AskUserQuestion e espere a resposta"
-  }
+  },
+  "lancar": [
+    "claude",
+    "-n",
+    "{nome}",
+    "--session-id",
+    "{uuid}",
+    "--",
+    "{prompt}"
+  ],
+  "_lancar": "https://code.claude.com/docs/en/cli-reference; `--` antes do prompt, para um prompt que começa com - não virar flag (a validar)"
 }

@@ -56,5 +56,12 @@
     "argumentos": "o texto que veio junto do comando (se não veio nada, pergunte)",
     "pergunte": "faça a pergunta na conversa e pare o turno até a resposta"
   },
-  "_permitidas": "só leitura local sem aprovação; rede e shell sempre pedem (página de terceiro pode injetar instrução)"
+  "_permitidas": "só leitura local sem aprovação; rede e shell sempre pedem (página de terceiro pode injetar instrução)",
+  "lancar": [
+    "kiro-cli",
+    "chat",
+    "--",
+    "{prompt}"
+  ],
+  "_lancar": "https://kiro.dev/docs/reference/cli-commands.md (sem flag de nome nem de id); `--` antes do prompt, para um prompt que começa com - não virar flag (a validar)"
 }

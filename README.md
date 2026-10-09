@@ -55,6 +55,21 @@ O `init` grava `~/.config/fluxo/config.json`:
 
 Os nomes são em português de propósito: o Copilot e o Kiro já têm `/plan` e `/review` nativos.
 
+## Módulos
+
+Desligados por padrão. `fluxo modulos` lista os módulos; `fluxo modulos --ligar task mensagens` liga
+e lembra de rodar `fluxo install`.
+
+| Módulo | O que traz | Precisa de |
+|---|---|---|
+| `task` | `fluxo task <ID>` abre a tarefa numa janela do tmux, em segundo plano, com `/planejar <ID>`, e ocupa vaga (`task.max`, padrão 2). `fluxo task -p "…"` abre uma sessão avulsa (nome do `/comando`, ou `avulsa`, `avulsa-b`…), que não ocupa vaga. `--lista` mostra as vivas. | tmux |
+| `mensagens` | skill `/aviso`: redige no seu tom (`~/.config/fluxo/tom.md`, criado por `fluxo msg tom`), pede aprovação e copia para a área de transferência (`fluxo msg copiar`). Nada é enviado. | pbcopy, clip.exe, wl-copy, xclip ou xsel |
+| `trava` | `fluxo trava pegar/soltar/status/quebrar/rodar`: uma sessão por vez no stack local. O E2E das instruções passa a usar. | tmux (para saber se o dono vive) |
+
+- **Comando de abertura de cada ferramenta:** fica em `adaptadores/ferramenta/*.json` (`lancar`). Se o
+  da sua versão for outro, sobrescreva na config: `"task": {"lancar": ["copilot", "-i", "{prompt}"]}`.
+- **Fora do tmux:** use `--target <sessão>:`.
+
 ## Atualizar, conflitos e desinstalar
 
 - **Atualizar:** puxe o repo (ou um zip novo) e rode `fluxo install` de novo. Só o que mudou é gravado.

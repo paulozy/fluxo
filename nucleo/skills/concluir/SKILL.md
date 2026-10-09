@@ -35,9 +35,14 @@ existem os links.
    (caminho expandido, fora do worktree), nunca entre aspas no shell: crase e `$(…)` digitados entre
    aspas duplas viram comando. (O `"$(cat arquivo)"` acima é seguro: o shell não reexecuta o que o
    `cat` devolve.)
+<!-- se modulo:mensagens -->
+4. **Aviso ao time:** siga a skill `/aviso` (tom do usuário, aprovação, cópia para a área de
+   transferência), com o link da {{forge.pr}} e uma linha sobre o que muda. **Nada é enviado** por você.
+<!-- senao -->
 4. **Rascunho do aviso ao time.** Uma mensagem curta, no tom do usuário (informal, direto, sem
    formato de e-mail), com o link da {{forge.pr}} e uma linha sobre o que muda. Mostre na conversa,
    pronta para copiar. **Nada é enviado** por você.
+<!-- fim -->
 5. **Limpeza.** `docker compose -p <repo>-<id> down -v` nos stacks desta tarefa (confira o nome com
    `docker compose ls`: nunca derrube o projeto do seu ambiente de dev). Remova os worktrees
    (`git worktree remove`) depois de conferir que cada um está limpo e sem commits à frente do remoto.

@@ -242,10 +242,13 @@ class TmuxDeVerdade(unittest.TestCase):
         os.environ.pop("TMUX_PANE", None)
         os.environ["TMUX_TMPDIR"] = self.tmp
         # -f /dev/null: o tmux.conf do usuário (plugins, run-shell) não roda no servidor de teste
-        subprocess.run(["tmux", "-f", "/dev/null", "new-session", "-d", "-s", "teste"], check=True, timeout=10)
+        # com um comando (sleep), o pane não abre o shell interativo do usuário (sem .zshrc)
+        subprocess.run(["tmux", "-f", "/dev/null", "new-session", "-d", "-s", "teste", "sleep", "600"],
+                       check=True, timeout=10)
         self.sock = self.socket()
         if not self.sock.startswith(self.tmp):
             self.restaurar()
+            shutil.rmtree(self.tmp, ignore_errors=True)
             self.fail(f"o tmux do teste não está isolado (socket {self.sock!r}); nada foi derrubado")
 
     def socket(self):

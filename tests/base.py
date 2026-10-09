@@ -1,6 +1,8 @@
 """Comum aos testes: o lib/ no sys.path e os cenários de config das quatro combinações."""
+import atexit
 import json
 import os
+import shutil
 import sys
 import tempfile
 from pathlib import Path
@@ -14,6 +16,7 @@ sys.path.insert(0, str(RAIZ / "lib"))
 os.environ.pop("TMUX", None)
 os.environ.pop("TMUX_PANE", None)
 os.environ["TMUX_TMPDIR"] = os.path.realpath(tempfile.mkdtemp(prefix="fxt", dir="/tmp"))
+atexit.register(shutil.rmtree, os.environ["TMUX_TMPDIR"], True)
 
 from fluxo import config as cfgmod  # noqa: E402
 

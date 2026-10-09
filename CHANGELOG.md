@@ -16,7 +16,10 @@
   - O `tom.md` local aprende com os ajustes aprovados.
 - **`trava`:** `fluxo trava pegar|soltar|status|quebrar|rodar`.
   - Dono num arquivo, com flock curto e sem processo segurando a trava.
-  - O dono vive se o pane do tmux dele existe, ou se o pid informado está vivo.
+  - **Dono vivo:** vale o pid da ferramenta (`CLAUDE_PID`, ou a ferramenta que rodou o fluxo), com a
+    marca de início (`/proc` no Linux; `ps -o lstart` com `LC_ALL=C TZ=UTC0` no Mac). Sem pid, vale o
+    par pane + `pane_pid` do tmux.
+  - O `rodar` repassa SIGTERM/SIGHUP ao comando e só solta a trava depois que ele termina.
   - O `quebrar` só sugere o `docker compose down`, não roda nada.
 - **`doctor`:** confere tmux e área de transferência quando os módulos estão ligados.
 

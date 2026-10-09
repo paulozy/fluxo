@@ -88,7 +88,7 @@ def abrir(id_, prompt, nome, cfg, adapt, cam, pasta, alvo=None, forcar=False, dr
           run=subprocess.run, dormir=time.sleep, saida=None, erro=None):
     saida, erro = saida or sys.stdout, erro or sys.stderr
     kind, nome, prompt, sufixar = resolver(id_, prompt, nome)
-    pasta = Path(pasta).expanduser()
+    pasta = Path(pasta).expanduser().resolve()  # relativa iria assim para o tasks.jsonl
     if not pasta.is_dir():  # o tmux abriria no HOME sem avisar, e o /planejar rodaria lá
         raise ErroUso(f"a pasta {pasta} não existe (--dir, ou codigo_dir na config)")
     modelo = cfg["task"].get("lancar") or adapt["lancar"]

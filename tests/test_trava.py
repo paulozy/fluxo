@@ -25,6 +25,8 @@ class Sistema:
         if argv[:2] == ["tmux", "list-panes"]:
             return subprocess.CompletedProcess(argv, 0, "".join(f"{p} {q} 0\n" for p, q in sorted(self.panes)), "")
         if argv[:3] == ["ps", "-o", "lstart="]:
+            # a hora sai igual para qualquer sessão só com locale e fuso fixos
+            assert kw["env"]["LC_ALL"] == "C" and kw["env"]["TZ"] == "UTC0", "ps sem LC_ALL=C/TZ=UTC0"
             pid = int(argv[-1])
             return subprocess.CompletedProcess(argv, 0 if pid in self.pids else 1, self.pids.get(pid, ""), "")
         raise AssertionError(f"comando inesperado: {argv}")
@@ -35,7 +37,7 @@ class Trava(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.estado = Path(self.tmp.name)
         self.sis = Sistema(panes={("%1", "100"), ("%2", "200")}, pids={500: "seg 09 out 01:00", 600: "seg 09 out 01:05"})
-        self.t = trava.Trava(self.estado, run=self.sis)
+        self.t = trava.Trava(self.estado, run=self.sis, proc="/sem-proc")  # força o caminho do ps (o do Mac)
 
     def tearDown(self):
         self.tmp.cleanup()
@@ -83,14 +85,14 @@ class Trava(unittest.TestCase):
                 raise FileNotFoundError("ps")
             return self.sis(argv, **kw)
 
-        t = trava.Trava(self.estado, run=sem_ps)
+        t = trava.Trava(self.estado, run=sem_ps, proc="/sem-proc")
         t.pegar("s1", pid=os.getpid())  # vivo: o próprio teste
         self.assertFalse(t.pegar("s2", pid=os.getpid())[0])
-        filho = subprocess.Popen(["sleep", "30"])
-        filho.kill()
-        filho.wait()
         t.soltar("s1")
-        t.pegar("s1", pid=filho.pid)  # morto
+        filho = subprocess.Popen(["sleep", "30"])
+        t.pegar("s1", pid=filho.pid)
+        filho.kill()
+        filho.wait()  # o dono morreu
         self.assertTrue(t.pegar("s2", pid=os.getpid())[0])
 
     def test_recusas(self):
@@ -101,6 +103,8 @@ class Trava(unittest.TestCase):
         for pid in (0, 1):
             with self.assertRaisesRegex(trava.ErroTrava, "inválido"):
                 self.t.pegar("s1", pid=pid)
+        with self.assertRaisesRegex(trava.ErroTrava, "não existe"):
+            self.t.pegar("s1", pid=4321)  # sem processo: o dono já nasceria morto
 
     def test_soltar_so_a_propria(self):
         self.t.pegar("s1", pid=500)
@@ -118,32 +122,57 @@ class Trava(unittest.TestCase):
         self.assertIsNone(self.t.ler())
 
     def test_rodar_solta_so_o_que_pegou_mesmo_com_erro(self):
-        ok = lambda cmd: subprocess.CompletedProcess(cmd, 7)
-        self.assertEqual(trava.rodar(self.t, ["x"], 0, run=ok, sessao="s1", pid=500), 7)
+        class Proc:
+            def __init__(self, codigo):
+                self.codigo = codigo
+
+            def wait(self):
+                return self.codigo
+
+            def poll(self):
+                return self.codigo
+
+        ok = lambda cmd: Proc(7)
+        self.assertEqual(trava.rodar(self.t, ["x"], 0, popen=ok, sessao="s1", pid=500), 7)
         self.assertIsNone(self.t.ler())  # pegou para rodar: solta
 
         def quebra(cmd):
             raise FileNotFoundError("comando sumiu")
 
         with self.assertRaises(FileNotFoundError):
-            trava.rodar(self.t, ["x"], 0, run=quebra, sessao="s1", pid=500)
+            trava.rodar(self.t, ["x"], 0, popen=quebra, sessao="s1", pid=500)
         self.assertIsNone(self.t.ler())  # a exceção não deixa a trava presa
         self.t.pegar("s1", pid=500)
-        trava.rodar(self.t, ["x"], 0, run=ok, sessao="s1", pid=500)
+        trava.rodar(self.t, ["x"], 0, popen=lambda c: Proc(0), sessao="s1", pid=500)
         self.assertEqual(self.t.ler()["sessao"], "s1")  # já era dela antes: continua
         err = io.StringIO()
         self.assertEqual(trava.rodar(self.t, ["x"], 0, erro=err, sessao="s2", pid=600), trava.OCUPADA)
         self.assertIn("ocupada por s1", err.getvalue())
 
-    def test_rodar_morto_por_sigterm_solta(self):
-        def mata(cmd):
-            os.kill(os.getpid(), signal.SIGTERM)  # o timeout da ferramenta
-            time.sleep(1)
+    def test_sinal_e_repassado_e_a_trava_espera_o_comando(self):
+        """O timeout da ferramenta manda SIGTERM ao fluxo: o comando recebe o sinal, termina a limpeza
+        (o `docker compose down` dele) e só então a trava é solta."""
+        for sinal in (signal.SIGTERM, signal.SIGHUP):
+            with self.subTest(sinal=sinal):
+                pronto = self.estado / f"limpou-{sinal}"
+                script = (f"import signal, sys, time\n"
+                          f"def fim(s, f):\n    time.sleep(0.3)\n    open({str(pronto)!r}, 'w').close()\n    sys.exit(0)\n"
+                          f"signal.signal({int(sinal)}, fim)\nprint('ok', flush=True)\ntime.sleep(10)\n")
+                filho = []
 
-        with self.assertRaises(SystemExit):
-            trava.rodar(self.t, ["x"], 0, run=mata, sessao="s1", pid=500)
-        self.assertIsNone(self.t.ler())
-        self.assertEqual(signal.getsignal(signal.SIGTERM), signal.SIG_DFL)  # o handler antigo voltou
+                def popen(cmd):
+                    p = subprocess.Popen(cmd, stdout=subprocess.PIPE, text=True)
+                    p.stdout.readline()  # o filho já instalou o handler
+                    filho.append(p)
+                    threading.Timer(0.1, os.kill, (os.getpid(), sinal)).start()
+                    return p
+
+                codigo = trava.rodar(self.t, ["python3", "-c", script], 0, popen=popen, sessao="s1", pid=500)
+                self.assertEqual(codigo, 128 + sinal)
+                self.assertTrue(pronto.exists())  # a limpeza do comando terminou antes de soltar
+                self.assertIsNone(self.t.ler())
+                self.assertEqual(signal.getsignal(sinal), signal.SIG_DFL)  # o handler antigo voltou
+                filho[0].stdout.close()
 
     def test_pegar_esperando(self):
         self.t.pegar("s1", pid=500)
@@ -178,10 +207,25 @@ class Trava(unittest.TestCase):
 
     def test_pid_da_ferramenta(self):
         self.assertEqual(trava.pid_da_ferramenta(env={"CLAUDE_PID": "4321"}), 4321)
-        ps = lambda argv, **kw: subprocess.CompletedProcess(argv, 0, " 888\n", "")
-        self.assertEqual(trava.pid_da_ferramenta(env={}, run=ps, getppid=lambda: 777), 888)  # o avô
-        init = lambda argv, **kw: subprocess.CompletedProcess(argv, 0, "1\n", "")
-        self.assertIsNone(trava.pid_da_ferramenta(env={}, run=init, getppid=lambda: 777))
+
+        def ps(arvore):  # pid → (nome, pai)
+            def run(argv, **kw):
+                pid = int(argv[-1])
+                if pid not in arvore:
+                    return subprocess.CompletedProcess(argv, 1, "", "")
+                nome, pai = arvore[pid]
+                return subprocess.CompletedProcess(argv, 0, f"{nome if argv[2] == 'comm=' else pai}\n", "")
+            return run
+
+        # bash -c fez exec: o pai já é a ferramenta
+        self.assertEqual(trava.pid_da_ferramenta(env={}, run=ps({50: ("node", 10)}), getppid=lambda: 50), 50)
+        # houve fork: o pai é o shell, e a ferramenta é o pai dele
+        self.assertEqual(trava.pid_da_ferramenta(env={}, run=ps({60: ("bash", 55), 55: ("kiro-cli", 9)}),
+                                                 getppid=lambda: 60), 55)
+        # à mão num pane: o shell do pane e o servidor do tmux nunca morrem com a sessão
+        self.assertIsNone(trava.pid_da_ferramenta(env={}, run=ps({70: ("-zsh", 8), 8: ("tmux: server", 1)}),
+                                                  getppid=lambda: 70))
+        self.assertIsNone(trava.pid_da_ferramenta(env={}, run=ps({}), getppid=lambda: 70))  # sem ps
 
     def test_descrever(self):
         self.assertEqual(trava.descrever(None, False), "livre")

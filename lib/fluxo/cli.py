@@ -118,7 +118,7 @@ def cmd_trava(args, raiz):
             return 1
         print("trava solta" if dono else "a trava já estava livre")
         return 0
-    pid = int(args.pid) if args.pid else trava.pid_da_ferramenta()
+    pid = args.pid if args.pid is not None else trava.pid_da_ferramenta()
     kw = dict(sessao=sessao, pane=pane, pane_pid=pane_pid, pid=pid, id_=args.id, projeto=args.projeto)
     try:
         if args.acao == "rodar":

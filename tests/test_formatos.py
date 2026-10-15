@@ -9,6 +9,7 @@ from pathlib import Path
 
 from base import CENARIOS, RAIZ, escrever_config
 from fluxo import config, fonte, montar
+from fluxo.ferramentas import codex
 
 UUID_FALSO = "-".join(["0123abcd", "0123", "4abc", "8abc", "0123456789ab"])
 TOOLS_KIRO = {
@@ -228,6 +229,86 @@ class SemDados(unittest.TestCase):
             (raiz / "b.md").write_text("trabalho na outra-empresa\n")
             achados = varredura.varrer(raiz, extra=extra)
             self.assertEqual([(a, n) for a, n, _ in achados], [("a.md", 1), ("b.md", 1)])
+
+
+CHAMADA_COM_BARRA = re.compile(r"(?<![\w./~-])/(" + "|".join(map(re.escape, montar.nomes_de_skills(RAIZ))) + r")(?![\w-])")
+CONTROLE = re.compile(r"[\x00-\x08\x0a-\x1f\x7f]")
+
+
+def ler_toml(texto, rel):
+    """O TOML que o fluxo grava: uma `chave = "string básica"` por linha, e a string sai do json.dumps.
+    Sem tomllib (o 3.9 não tem, e o repo não usa): confere o formato e devolve os valores."""
+    valores = {}
+    for linha in texto.splitlines():
+        chave, sep, valor = linha.partition(" = ")
+        if not sep or not re.fullmatch(r"[a-z_]+", chave) or CONTROLE.search(valor) or not valor.startswith('"'):
+            raise AssertionError(f"{rel}: linha fora do formato: {linha[:80]}")
+        valores[chave] = json.loads(valor)
+    return valores
+
+
+class Codex(unittest.TestCase):
+    def test_agentes_em_toml(self):
+        gerado, _ = gerar("copilot-codex")
+        tomls = {rel: t for rel, t in gerado.items() if rel.startswith(".codex/agents/")}
+        self.assertEqual(len(tomls), 8)
+        for rel, texto in tomls.items():
+            with self.subTest(agente=rel):
+                valores = ler_toml(texto, rel)
+                # o Codex lê com deny_unknown_fields: uma chave a mais (como `tools`) derruba o agente
+                self.assertLessEqual(set(valores), {"name", "description", "developer_instructions", "model"})
+                self.assertEqual(valores["name"], Path(rel).stem)
+                self.assertTrue(valores["developer_instructions"].strip())
+                self.assertNotIn("model", valores)  # sem `models.codex` na config: herda o da sessão
+        so_leitura = "**Read-only.**"
+        for nome, tem in (("architect", True), ("researcher", True), ("code-reviewer", True),
+                          ("committer", False), ("doc-writer", False), ("debugger", False), ("test-runner", False)):
+            with self.subTest(so_leitura=nome):
+                self.assertEqual(so_leitura in gerado[f".codex/agents/{nome}.toml"], tem)
+        self.assertNotIn(so_leitura, gerado[".copilot/agents/architect.agent.md"])
+
+    def test_models_do_codex(self):
+        gerado, _ = gerar("codex", models={"codex": {"strong": "modelo-x"}})
+        self.assertEqual(ler_toml(gerado[".codex/agents/architect.toml"], "a")["model"], "modelo-x")
+        self.assertNotIn("model", ler_toml(gerado[".codex/agents/debugger.toml"], "d"))
+
+    def test_string_toml_com_caracteres_dificeis(self):
+        texto = 'aspas " barra \\ linha\nDEL \x7f acento ção, tab\t e fim'
+        valor = codex.toml_str(texto)
+        self.assertNotRegex(valor, CONTROLE)
+        self.assertIn("\\u007f", valor)
+        self.assertEqual(ler_toml(f"x = {valor}", "x"), {"x": texto})
+
+    def test_instrucoes_e_skills_com_o_prefixo_do_codex(self):
+        gerado, _ = gerar("codex", modules=["messages", "promote", "reviewer", "task"])
+        self.assertFalse(gerado[".codex/AGENTS.md"].startswith("---"))  # markdown puro
+        skills = {rel: t for rel, t in gerado.items() if rel.endswith("/SKILL.md")}
+        self.assertEqual({rel.split("/")[0] for rel in skills}, {".agents"})
+        for rel, texto in skills.items():
+            with self.subTest(skill=rel):
+                self.assertEqual(set(fonte.ler(texto, rel)[0]), {"name", "description"})
+        textos = "\n".join(gerado.values())
+        self.assertIn("$planejar", textos)
+        self.assertIn("Use depois do $planejar", skills[".agents/skills/implementar/SKILL.md"])  # a description também
+        self.assertNotRegex(textos, CHAMADA_COM_BARRA)
+        self.assertNotIn("$ARGUMENTS", textos)
+
+    def test_o_prefixo_nao_vaza_entre_ferramentas(self):
+        gerado, _ = gerar("copilot-codex")
+        do_codex = "\n".join(t for rel, t in gerado.items() if rel.startswith(".codex/"))
+        do_copilot = "\n".join(t for rel, t in gerado.items() if rel.startswith(".copilot/"))
+        self.assertNotRegex(do_codex, CHAMADA_COM_BARRA)
+        self.assertNotIn("$planejar", do_copilot)
+        self.assertIn("/planejar", do_copilot)
+
+    def test_pasta_das_skills(self):
+        for tools in (["codex", "copilot"], ["copilot", "codex"]):
+            with self.subTest(tools=tools):
+                gerado, _ = gerar("copilot-codex", tools=tools)
+                self.assertEqual([r for r in gerado if r.startswith(".agents/")], [])  # o Copilot também lê ali
+                self.assertEqual(len([r for r in gerado if r.startswith(".codex/skills/")]), 10)
+        sozinho, _ = gerar("codex")
+        self.assertEqual([r for r in sozinho if r.startswith(".codex/skills/")], [])
 
 
 class Python39(unittest.TestCase):

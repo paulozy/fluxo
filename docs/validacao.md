@@ -111,6 +111,29 @@ edição à mão.
 | 15 | No `~/.local/share/fluxo/estado/eventos-*.jsonl`, o campo `sessao` | o id da sessão do Kiro | veio `pane-%N`: o payload não traz `session_id` |
 | 16 | Kiro V3 (`--v3`): com o painel, os hooks de `~/.kiro/hooks/fluxo.json` disparam | eventos no arquivo | conferir o nome dos triggers e a unidade do `timeout` (segundos?) |
 
+## Codex CLI (v0.6.0)
+
+A pesquisa leu as docs (learn.chatgpt.com/docs) e o código da tag `rust-v0.162.1`. O que só o código ou a
+inferência sustenta está aqui. Antes, atualize o `codex`: uma instalação de 2025 (`codex-cli 0.0.…`) não
+tem skills, agentes nem hooks.
+
+| # | Teste | Esperado | Se falhar |
+|---|---|---|---|
+| C1 | `codex --version` e `fluxo doctor` | `codex-cli 0.16x` ou mais novo; o doctor sem FALHA | |
+| C2 | `fluxo init --tool codex … --force && fluxo install`, depois, na sessão: "qual a palavra-canário das suas instruções?" (canário no `~/.codex/AGENTS.md`) | a palavra | um `AGENTS.override.md` seu está na frente (o doctor avisa), ou o `CODEX_HOME` aponta para outro lugar |
+| C3 | `/skills` | as skills do fluxo | com o copilot em `tools` elas vão para `~/.codex/skills`: essa versão parou de ler a pasta obsoleta (`host_roots.rs`); avise |
+| C4 | `fluxo task -p '$revisar' --tool codex` dentro do tmux | janela "revisar" com o Codex rodando a skill | o `--` antes do prompt não é aceito, ou o `$revisar` no prompt inicial não escolhe a skill: ajuste `task.launch.codex` e avise |
+| C5 | Numa tarefa, `$planejar <id>` | o `architect` é chamado (`/agents` mostra os 7) | um agente não carregou: o nome com hífen (`code-reviewer`) ou uma chave que o Codex recusa (o startup avisa) |
+| C6 | Peça ao `researcher` para mapear algo | ele não edita nada | ele editou: a regra de só leitura no texto não basta; avise |
+| C7 | `fluxo modules --enable panel && fluxo install`, uma sessão nova, `/hooks` | os hooks do fluxo aparecem para aprovar; depois de aprovados, a sessão entra no `fluxo panel` | não aparecem: conferir o `~/.codex/hooks.json` e o `hook-erros.log` |
+| C8 | A sessão aberta pelo `fluxo task` no `fluxo panel` | o pane certo, e Enter leva até ela | o pane é de outra janela: o `--no-daemon` não segurou a sessão no processo do pane |
+| C9 | Mude algo nos hooks (outro `fluxo install` depois de mudar a fonte) | o `/hooks` pede nova aprovação | |
+| C10 | Um PermissionRequest (peça algo fora do sandbox) | o pedido de aprovação normal | — (o fluxo não registra esse evento; se um dia registrar, confira que um hook que falha não nega a ação) |
+| C11 | `$planejar` grava o plano em `~/.local/share/fluxo/planos/`, e o `fluxo lock acquire` grava o estado | pede aprovação (fora do workspace) ou grava | falha sem pedir: anote o sandbox da sua config e avise |
+| C12 | `$concluir` numa tarefa de teste (`gh pr create`) | pede aprovação de rede, ou abre a PR | |
+| C13 | Com o panel, uma sessão do Codex: o `~/.local/share/fluxo/estado/eventos-*.jsonl` | os eventos dela | vazio, e nada no `hook-erros.log`: o hook roda dentro do sandbox e não pode gravar ali; avise |
+| C14 | `fluxo lock acquire --id t1` de dentro de uma sessão do Codex, depois feche a sessão | outra sessão pega a trava (o dono morreu) | a trava fica presa: o pid do dono não é o do Codex (`lock.pid_da_ferramenta`); avise |
+
 ## Depois
 
 Registre o resultado de cada linha no CHANGELOG, na versão que fechar a validação. O que divergiu

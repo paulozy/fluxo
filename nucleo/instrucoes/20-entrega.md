@@ -22,6 +22,6 @@ Toda feature segue estas fases, em ordem, sem pular nenhuma.
    verdes. Aplique os ajustes apontados.
 4. **E2E local** (regras abaixo). Suba todos os projetos envolvidos, não só o principal.
 5. **Ajustes pós-E2E**, se precisar.
-6. **Conclusão** (`/concluir`), nesta ordem: resumo do que **de fato** foi feito, docs e CHANGELOG
+6. **Conclusão** (`{{skill.concluir}}`), nesta ordem: resumo do que **de fato** foi feito, docs e CHANGELOG
    que o projeto já mantém, a {{forge.pr}} (com a sua aprovação), o rascunho do aviso ao time, a
    limpeza e o fechamento do plano.

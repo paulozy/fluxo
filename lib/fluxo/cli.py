@@ -64,14 +64,15 @@ def cmd_task(args, raiz):
     if args.list:
         return task.listar(cam)
     tool = args.tool or cfg["tools"][0]
-    if tool not in cfg["tools"]:  # sem as instruções e as skills do fluxo, a sessão não teria o /planejar
+    if tool not in cfg["tools"]:  # sem as instruções e as skills do fluxo, a sessão não teria o planejar
         print(f"fluxo task: {tool} não está em tools ({', '.join(cfg['tools'])}); acrescente na config e rode "
               "fluxo install", file=sys.stderr)
         return 2
     pasta = Path(args.dir or os.path.expanduser(cfg["code_dir"]))
     try:
         return task.abrir(args.id, args.prompt, args.name, cfg, tool, _adaptador(raiz, tool), cam, pasta, alvo=args.target,
-                          forcar=args.force, dry_run=args.dry_run, dentro_do_tmux=bool(os.environ.get("TMUX")))
+                          forcar=args.force, dry_run=args.dry_run, dentro_do_tmux=bool(os.environ.get("TMUX")),
+                          skills=montar.nomes_de_skills(raiz))
     except task.ErroUso as exc:
         print(f"fluxo task: {exc}", file=sys.stderr)
         return 2
@@ -226,7 +227,9 @@ def _montar(args, raiz):
 def cmd_install(args, raiz):
     cam, cfg, arquivos, avisos = _montar(args, raiz)
     acoes = instalar.planejar(arquivos, instalar.ler_manifesto(cam.manifesto), cam.home)
-    avisos += panel.avisos_do_install({a.rel for a in acoes if a.tipo == instalar.REMOVER}, cam)
+    avisos += panel.avisos_do_install({a.rel for a in acoes if a.tipo == instalar.REMOVER}, cam,
+                                      {a.rel for a in acoes if a.tipo in (instalar.CRIAR, instalar.ATUALIZAR)
+                                       or (a.tipo == instalar.CONFLITO and args.force)})
     for a in avisos:
         print(f"aviso: {a}")
     tools = ", ".join(t + (" " + cfg["kiro"]["engine"] if t == "kiro" else "") for t in cfg["tools"])
@@ -297,7 +300,7 @@ def cmd_package(args, raiz):
 
 
 def parser():
-    ap = argparse.ArgumentParser(prog="fluxo", description="o fluxo de dev portátil (Claude Code, Copilot CLI, Kiro CLI)")
+    ap = argparse.ArgumentParser(prog="fluxo", description="o fluxo de dev portátil (Claude Code, Copilot CLI, Kiro CLI, Codex CLI)")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     p = sub.add_parser("init", help="cria a config desta máquina")
@@ -339,7 +342,7 @@ def parser():
 
     p = sub.add_parser("task", help="abre uma sessão numa janela do tmux (módulo task)")
     p.add_argument("id", nargs="?", help="ID da tarefa (ex.: a chave do card); sem ID é uma sessão avulsa")
-    p.add_argument("-p", "--prompt", help="prompt inicial (com ID, o padrão é /planejar <ID>)")
+    p.add_argument("-p", "--prompt", help="prompt inicial (com ID, o padrão é a skill planejar com o ID)")
     p.add_argument("-n", "--name", help="nome da sessão avulsa (padrão: o /comando, ou avulsa)")
     p.add_argument("--dir", help="pasta da sessão (padrão: code_dir)")
     p.add_argument("--target", help="sessão do tmux onde abrir (ex.: main:); obrigatório fora do tmux")

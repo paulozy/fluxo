@@ -1,14 +1,14 @@
 # fluxo
 
 O fluxo de desenvolvimento (pesquisar → planejar → implementar, worktree, testes, code review, E2E,
-PR e conclusão) para usar com **Claude Code**, **GitHub Copilot CLI** ou **Kiro CLI**. Tudo é
-instalado no nível do usuário (`~/.claude`, `~/.copilot`, `~/.kiro`): **nada entra no repo da
-empresa**.
+PR e conclusão) para usar com **Claude Code**, **GitHub Copilot CLI**, **Kiro CLI** ou **OpenAI Codex
+CLI**. Tudo é instalado no nível do usuário (`~/.claude`, `~/.copilot`, `~/.kiro`, `~/.codex`):
+**nada entra no repo da empresa**.
 
 ## Requisitos
 
 - Python 3.9 ou mais novo, só a biblioteca padrão. O do Xcode, no Mac, serve.
-- A ferramenta (`claude`, `copilot` ou `kiro-cli`) e o `git`.
+- A ferramenta (`claude`, `copilot`, `kiro-cli` ou `codex`) e o `git`.
 - Para abrir PR/MR e usar o `/pr-feedback`: `gh` (GitHub) ou `glab` (GitLab).
 
 ## Instalar
@@ -27,7 +27,7 @@ O `init` grava `~/.config/fluxo/config.json`:
 
 | Chave | Valores | Para quê |
 |---|---|---|
-| `tools` | `claude`, `copilot`, `kiro` (uma ou mais) | onde instalar e em que formato; a primeira é a padrão do `fluxo task` (veja [Duas ferramentas](#duas-ferramentas)) |
+| `tools` | `claude`, `copilot`, `kiro`, `codex` (uma ou mais) | onde instalar e em que formato; a primeira é a padrão do `fluxo task` (veja [Duas ferramentas](#duas-ferramentas)) |
 | `forge` | `github`, `gitlab` | `gh` ou `glab`; PR ou MR |
 | `kiro.engine` | `v2` (padrão), `v3` | nomes de ferramenta dos agentes do Kiro |
 | `git.base` | `develop` | de onde saem as branches |
@@ -38,7 +38,7 @@ O `init` grava `~/.config/fluxo/config.json`:
 ## O que é instalado
 
 - **Instruções** (o processo), em cada ferramenta de `tools`: `~/.claude/rules/fluxo.md`,
-  `~/.copilot/instructions/fluxo.instructions.md` ou `~/.kiro/steering/fluxo.md`.
+  `~/.copilot/instructions/fluxo.instructions.md`, `~/.kiro/steering/fluxo.md` ou `~/.codex/AGENTS.md`.
 - **7 subagentes:** architect, researcher, test-runner, code-reviewer, debugger, doc-writer e committer.
 - **Skills:**
 
@@ -54,7 +54,8 @@ O `init` grava `~/.config/fluxo/config.json`:
 
 - **`~/.local/bin/fluxo`**, que roda a cópia de onde o install saiu.
 
-Os nomes são em português de propósito: o Copilot e o Kiro já têm `/plan` e `/review` nativos.
+Os nomes são em português de propósito: o Copilot e o Kiro já têm `/plan` e `/review` nativos. No Codex,
+a skill é chamada com `$`: `$planejar`, `$implementar` (veja [Codex](#codex)).
 
 ## Módulos
 
@@ -67,7 +68,7 @@ e lembra de rodar `fluxo install`.
 | `messages` | skill `/aviso`: redige no seu tom (`~/.config/fluxo/tom.md`, criado por `fluxo msg tone`), pede aprovação e copia para a área de transferência (`fluxo msg copy`). Nada é enviado. | pbcopy, clip.exe, wl-copy, xclip ou xsel |
 | `lock` | `fluxo lock acquire/release/status/break/run`: uma sessão por vez no stack local. O E2E das instruções passa a usar. | tmux (para saber se o dono vive) |
 | `watch` | `fluxo watch tick` lê as suas PRs (GitHub) ou MRs (GitLab) e avisa na área de trabalho: review ou comentário novo, aprovação no commit atual, CI que quebrou ou passou, merge. Só avisa. `fluxo watch enable` agenda: launchd no Mac, systemd no Linux, uma janela do tmux no WSL. `fluxo watch` mostra o status. | `gh` ou `glab` logado |
-| `panel` | `fluxo panel`: as sessões da ferramenta ao vivo (trabalhando, sua vez, pergunta, parada), com Enter levando até a sessão no tmux. Os hooks vão para `~/.copilot/hooks` ou `~/.kiro/hooks`; no Kiro V2, um agente `fluxo` vira o padrão (`fluxo panel enable`). Só Copilot e Kiro: no Claude o painel é o agent-tree. | tmux |
+| `panel` | `fluxo panel`: as sessões da ferramenta ao vivo (trabalhando, sua vez, pergunta, parada), com Enter levando até a sessão no tmux. Os hooks vão para `~/.copilot/hooks`, `~/.kiro/hooks` ou `~/.codex/hooks.json` (no Codex, aprovados em `/hooks`); no Kiro V2, um agente `fluxo` vira o padrão (`fluxo panel enable`). Copilot, Kiro e Codex: no Claude o painel é o agent-tree. | tmux |
 | `promote` | skill `/promover <id>`: depois do QA, leva os commits que entraram na base para as bases seguintes (`promote.targets`, ex.: staging e main), por cherry-pick, com uma PR/MR por base. Mostra tudo antes de publicar; o merge é sempre seu ou do time. | — |
 | `reviewer` | skill `/revisar-pr` e o agente `verificador`: duas revisões isoladas (`code-reviewer` + diff contra o plano), relatório com veredito (REPROVAR, PRECISA DE HUMANO, APROVÁVEL) em `~/.local/share/fluxo/revisoes/`. O `/concluir` roda antes de abrir a PR/MR. | — |
 
@@ -88,7 +89,7 @@ fluxo install
 - **A primeira de `tools` é a padrão.** `fluxo task <ID>` abre nela, e `fluxo task <ID> --tool claude`
   abre na outra.
 - **Trocar no meio de uma tarefa:** feche a janela antiga e abra de novo na outra ferramenta, com
-  `fluxo task <ID> --tool claude -p "/implementar <ID>"`. O plano (`~/.local/share/fluxo/planos/<id>.md`),
+  `fluxo task <ID> --tool claude -p '/implementar <ID>'` (no Codex, `'$implementar <ID>'`). O plano (`~/.local/share/fluxo/planos/<id>.md`),
   a branch e o worktree valem para as duas.
 - **Uma sessão que abre outra** (`fluxo task` de dentro dela) usa a própria ferramenta: as instruções de
   cada uma já trazem o `--tool` dela.
@@ -99,6 +100,29 @@ fluxo install
 - **Conflito numa ferramenta para o install inteiro.** Se a pasta de uma delas já tiver um arquivo com o
   nome de um do fluxo (um agente seu, por exemplo), nada é gravado, nem para a outra. Renomeie o seu, ou
   use `--force`, que guarda um backup.
+
+## Codex
+
+O Codex tem tudo o que o fluxo usa, mas algumas peças funcionam diferente:
+
+- **Instruções em `~/.codex/AGENTS.md`.** O Codex lê um AGENTS.md global só. Se você já tem um, o install
+  para com conflito: junte os dois num arquivo seu, ou deixe o do fluxo. Um `AGENTS.override.md` não
+  vazio tira o do fluxo de cena, e o `fluxo doctor` avisa.
+- **Skill com `$`:** `$planejar PROJ-12`, e não `/planejar`. No shell, o prompt vai entre aspas simples:
+  `fluxo task PROJ-12 --tool codex -p '$implementar PROJ-12'`.
+- **Skills em `~/.agents/skills`**, o lugar oficial. Com o Copilot junto, vão para `~/.codex/skills`,
+  porque o Copilot também lê `~/.agents/skills` e as veria em dobro. O `~/.codex/skills/.system` é do
+  próprio Codex.
+- **Agentes em `~/.codex/agents/*.toml`, sem restrição de ferramenta.** O Codex não tem esse campo, e o
+  "só leitura" do architect, do researcher e do code-reviewer vira uma regra no texto deles.
+- **Hooks do panel em `~/.codex/hooks.json`, que é inteiro do fluxo:** com hooks seus ali, dá conflito.
+  Cada hook só roda depois de aprovado em `/hooks`, e de novo quando o fluxo muda o arquivo. O install
+  avisa.
+- **O sandbox continua o seu:** o que o fluxo faz fora do repo (gravar o plano e a trava em
+  `~/.local/share/fluxo`, a rede do `gh`/`glab`) pode pedir aprovação.
+- **O `fluxo task` abre com `codex --no-daemon -- '<prompt>'`.** O Codex não aceita id nem nome de
+  sessão.
+- **Versão:** confira o roteiro de validação com o `codex` atualizado. O formato do Codex muda rápido.
 
 ## Atualizar, conflitos e desinstalar
 

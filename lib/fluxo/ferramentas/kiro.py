@@ -25,7 +25,7 @@ def agente(ag, Arquivo, motor="v2", permitidas=()):
     return Arquivo(f".kiro/agents/{ag['name']}.json", texto.encode())
 
 
-def skill(sk, Arquivo):
+def skill(sk, Arquivo, **_):
     # o Kiro só documenta name/description/license/compatibility/metadata: o argument-hint fica de fora
     meta = {"name": sk["name"], "description": sk["description"]}
     return Arquivo(f".kiro/skills/{sk['name']}/SKILL.md", fonte.escrever(meta, sk["corpo"]).encode())

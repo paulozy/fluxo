@@ -172,6 +172,52 @@ class Task(unittest.TestCase):
         self.tmux.vivos = set()
         self.assertEqual(self.abrir(prompt="/revisar y")[0], 0)
 
+    def test_codex(self):
+        cfg = dict(self.cfg, tools=["copilot", "codex"])
+        self.adapt = cli._adaptador(RAIZ, "codex")
+        self.assertEqual(self.abrir("PROJ-1", cfg=cfg, tool="codex")[0], 0)
+        self.assertEqual(self.comando(), ["codex", "--no-daemon", "--", "$planejar PROJ-1"])
+        self.assertIsNone(self.registros()[-1]["sessao"])  # o Codex não aceita id: ele vem pelo hook
+        self.abrir(prompt="-x estranho", cfg=cfg, tool="codex")
+        self.assertEqual(self.comando()[-2:], ["--", "-x estranho"])  # depois do --: não vira flag
+        self.abrir(prompt="$revisar agora", cfg=cfg, tool="codex")
+        self.assertEqual(self.registros()[-1]["nome"], "revisar")
+        with self.assertRaisesRegex(task.ErroUso, r"\$planejar"):
+            self.abrir(prompt="$planejar X", cfg=cfg, tool="codex")
+
+    def test_habito_das_outras_ferramentas_no_codex(self):
+        skills = montar.nomes_de_skills(RAIZ)
+        for args in ((None, "/implementar PROJ-1", None), ("PROJ-1", "/implementar PROJ-1", None)):
+            with self.subTest(args=args), self.assertRaisesRegex(task.ErroUso, r"com \$: -p '\$implementar"):
+                task.resolver(*args, "$", skills)
+        self.assertEqual(task.resolver(None, "/compact", None, "$", skills)[1], "avulsa")  # não é skill do fluxo
+        self.assertEqual(task.resolver(None, "$HOME quebrou", None, "$", skills)[1], "avulsa")  # texto, não sessão "home"
+        self.assertEqual(task.resolver(None, "$revisar o diff", None, "$", skills)[1], "revisar")
+        with self.assertRaisesRegex(task.ErroUso, "são de uma tarefa"):  # no `/` é a skill de verdade
+            task.resolver(None, "/implementar x", None, "/", skills)
+
+    def test_cli_passa_as_skills_ao_task(self):
+        escrever_config(self.home, "copilot-codex", modules=["task"])
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err), contextlib.redirect_stdout(io.StringIO()), \
+                mock.patch("fluxo.task.tmux.panes_vivos", return_value=set()):
+            code = cli.main(["task", "--home", str(self.home), "--tool", "codex", "--dir", str(self.home), "--dry-run",
+                             "-p", "/implementar PROJ-1"], RAIZ)
+        self.assertEqual(code, 2)
+        self.assertIn("'$implementar", err.getvalue())
+
+    def test_prefixo_da_ferramenta(self):
+        """O prompt padrão e o nome da avulsa usam o prefixo de skill do adaptador (o `$` do Codex)."""
+        self.adapt = dict(self.adapt, prefixo="$")
+        self.abrir("PROJ-1")
+        self.assertEqual(self.comando()[-1], "$planejar PROJ-1")
+        self.assertEqual(task.nome_do_prompt("$revisar x", "$"), "revisar")
+        self.assertIsNone(task.nome_do_prompt("$HOME está errado"))  # no `/`, `$…` é texto: vira avulsa
+        self.assertEqual(task.resolver(None, "$HOME x", None)[1], "avulsa")
+        with self.assertRaisesRegex(task.ErroUso, r"\$planejar, \$implementar"):
+            task.resolver(None, "$implementar X", None, "$")
+        self.assertEqual(task.resolver(None, "$implementar X", None)[0], "avulsa")  # no `/`, não é skill
+
     def test_nomes(self):
         self.assertEqual(task.nome_do_prompt("/watch agora"), None)  # reservado: vira avulsa
         self.assertEqual(task.resolver(None, "x", "LOGS")[1], "logs")

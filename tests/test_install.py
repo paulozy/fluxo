@@ -359,6 +359,53 @@ class Install(unittest.TestCase):
             with self.assertRaisesRegex(montar.ErroMontagem, "mesmo destino: igual.txt"):
                 montar.montar(cfg, RAIZ, cam)
 
+    def test_skills_do_codex_mudam_de_pasta_com_o_copilot(self):
+        """Com o copilot, ~/.codex/skills; sem ele, ~/.agents/skills. A troca é um install só, sem conflito."""
+        self.assertEqual(self.instalar("codex")[0], 0)
+        self.assertTrue((self.home / ".agents" / "skills" / "planejar" / "SKILL.md").exists())
+        code, out, err = self.instalar("codex", tools=["codex", "copilot"])
+        self.assertEqual(code, 0, err)
+        self.assertEqual(arvore(self.home, (".agents",)), {})
+        self.assertTrue((self.home / ".codex" / "skills" / "planejar" / "SKILL.md").exists())
+        code, out, err = self.instalar("codex")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(arvore(self.home, (".codex/skills",)), {})
+        self.assertTrue((self.home / ".agents" / "skills" / "planejar" / "SKILL.md").exists())
+        self.assertEqual(rodar("uninstall", "--home", str(self.home))[0], 0)
+        self.assertEqual(arvore(self.home), {})
+
+    def test_hooks_do_codex_pedem_aprovacao(self):
+        aviso = "aviso: hooks do panel no Codex: aprove-os em /hooks"
+        code, out, _ = self.instalar("copilot-codex")
+        self.assertEqual(code, 0)
+        self.assertIn(aviso, out)
+        self.assertNotIn("aprove-os", self.instalar("copilot-codex")[1])  # nada mudou: nada a aprovar de novo
+        with mock.patch.dict(panel.EVENTOS, {"codex": {"SessionStart": "inicio"}}):  # o fluxo mudou os hooks
+            code, out, _ = self.instalar("copilot-codex")
+        self.assertIn("  atualizar  ~/.codex/hooks.json", out)
+        self.assertIn(aviso, out)
+        self.assertNotIn("aprove-os", self.instalar("copilot-codex", tools=["copilot"])[1])  # removido: nada a aprovar
+
+    def test_force_por_cima_dos_hooks_do_usuario_tambem_avisa(self):
+        hooks = self.home / ".codex" / "hooks.json"
+        hooks.parent.mkdir(parents=True)
+        hooks.write_text('{"hooks": {}}\n')
+        self.assertEqual(self.instalar("copilot-codex")[0], 3)
+        code, out, _ = self.instalar("copilot-codex", "--force")
+        self.assertEqual(code, 0)
+        self.assertIn("aprove-os em /hooks", out)
+
+    def test_limite_da_description_depois_do_template(self):
+        repo = self.home / "repo"
+        shutil.copytree(RAIZ, repo, ignore=shutil.ignore_patterns(".git", "esperado", "__pycache__"))
+        p = repo / "nucleo" / "skills" / "revisar" / "SKILL.md"
+        meta, corpo = fonte.ler(p.read_text())
+        # 1017 caracteres na fonte; o {{dados}} vira ~/.local/share/fluxo, e o texto passa de 1024
+        p.write_text(fonte.escrever(dict(meta, description="a" * 990 + "{{dados}}" * 3), corpo))
+        cam = escrever_config(self.home, "claude")
+        with self.assertRaisesRegex(montar.ErroMontagem, "até 1024"):
+            montar.montar(config.carregar(cam, montar.modulos_existentes(repo)), repo, cam)
+
     def test_init_force_mantem_as_opcoes(self):
         """O --force refaz os eixos (ferramentas, forge, os…) e mantém o que o usuário ajustou depois."""
         cam = config.Caminhos(home=self.home)

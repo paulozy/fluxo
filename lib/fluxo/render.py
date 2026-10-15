@@ -5,7 +5,7 @@ ferramenta com `{{forge.pr}}` cru ou com o bloco errado. Os blocos não se aninh
 """
 import re
 
-VAR = re.compile(r"\{\{\s*([\w.]+)\s*\}\}")
+VAR = re.compile(r"\{\{\s*([\w.-]+)\s*\}\}")  # o hífen é de {{skill.pr-feedback}}
 BLOCO = re.compile(
     r"^[ \t]*<!--\s*se\s+(?P<cond>[^>]+?)\s*-->[ \t]*\n(?P<sim>.*?)"
     r"(?:^[ \t]*<!--\s*senao\s*-->[ \t]*\n(?P<nao>.*?))?"

@@ -10,9 +10,9 @@ from pathlib import Path
 
 from . import config as cfgmod
 from . import fonte, render
-from .ferramentas import claude, copilot, kiro
+from .ferramentas import claude, codex, copilot, kiro
 
-RENDERIZADORES = {"claude": claude, "copilot": copilot, "kiro": kiro}
+RENDERIZADORES = {"claude": claude, "copilot": copilot, "kiro": kiro, "codex": codex}
 TOOLS_ABSTRATAS = ("read", "search", "edit", "shell", "web", "agent")
 CABECALHO = "<!-- gerado pelo fluxo a partir de {fonte}: edite a fonte e rode `fluxo install` -->\n"
 
@@ -30,6 +30,14 @@ class ErroMontagem(Exception):
 
 def modulos_existentes(raiz):
     return tuple(sorted(p.parent.name for p in (Path(raiz) / "modulos").glob("*/modulo.json")))
+
+
+def nomes_de_skills(raiz):
+    """Todas as skills do repo, inclusive as de módulos desligados: o template resolve `{{skill.x}}` até
+    nos ramos que não vão sair."""
+    raiz = Path(raiz)
+    pastas = [raiz / "nucleo" / "skills"] + sorted((raiz / "modulos").glob("*/skills"))
+    return sorted(p.parent.name for pasta in pastas for p in pasta.glob("*/SKILL.md"))
 
 
 def _json(caminho):
@@ -74,7 +82,8 @@ def contexto(cfg, tool, raiz, caminhos, modulos):
            "config": caminhos.exibir(caminhos.config_dir), "config_sh": caminhos.exibir(caminhos.config_dir, shell=True),
            "promover": {"alvos": ", ".join(map(str, cfg["promote"]["targets"] or ["main"])),
                         "ultimo": str((cfg["promote"]["targets"] or ["main"])[-1])},
-           "ferramenta": {"nome": adapt["nome"], "id": tool}}
+           "ferramenta": {"nome": adapt["nome"], "id": tool},
+           "skill": {n: adapt["prefixo"] + n for n in nomes_de_skills(raiz)}}  # /planejar, ou $planejar
     ctx.update(adapt["vars"])
     return adapt, ctx, eixos, validos
 
@@ -156,7 +165,7 @@ def _montar_ferramenta(cfg, tool, modulos, raiz, caminhos):
             if meta["model"] not in cfgmod.NIVEIS:
                 raise ErroMontagem(f"{onde}: model {meta['model']!r} não é um de {', '.join(cfgmod.NIVEIS)}")
             agentes.append({
-                "name": meta["name"], "description": meta["description"],
+                "name": meta["name"], "description": tpl(meta["description"], onde),
                 "tools": _traduzir(meta["tools"], tabela, onde, avisos, adapt["nome"]),
                 "model": cfg["models"].get(tool, {}).get(meta["model"]) or adapt["modelos"].get(meta["model"]),
                 "corpo": tpl(corpo, onde).strip() + "\n", "fonte": onde,
@@ -169,9 +178,10 @@ def _montar_ferramenta(cfg, tool, modulos, raiz, caminhos):
             meta, corpo = fonte.ler(p.read_text(encoding="utf-8"), onde)
             if meta.get("name") != p.parent.name:
                 raise ErroMontagem(f"{onde}: o name tem que ser igual ao nome da pasta ({p.parent.name})")
-            if not meta.get("description") or len(meta["description"]) > 1024:
+            descricao = tpl(meta.get("description") or "", onde)
+            if not descricao or len(descricao) > 1024:
                 raise ErroMontagem(f"{onde}: description obrigatória, com até 1024 caracteres")
-            skills.append({"name": meta["name"], "description": meta["description"],
+            skills.append({"name": meta["name"], "description": descricao,
                            "argument-hint": meta.get("argument-hint"),
                            "corpo": CABECALHO.format(fonte=onde) + tpl(corpo, onde).lstrip("\n")})
 
@@ -186,7 +196,7 @@ def _montar_ferramenta(cfg, tool, modulos, raiz, caminhos):
     arquivos += rend.instrucoes(instrucoes, Arquivo)
     arquivos += [rend.agente(a, Arquivo, motor=motor, permitidas=adapt.get("permitidas", {}).get(motor, []))
                  for a in agentes]
-    arquivos += [rend.skill(s, Arquivo) for s in skills]
+    arquivos += [rend.skill(s, Arquivo, tools=cfg["tools"]) for s in skills]
     for m in modulos:  # arquivos da ferramenta (os hooks e o agente do panel)
         codigo = _codigo(m)
         if hasattr(codigo, "arquivos_da_ferramenta"):

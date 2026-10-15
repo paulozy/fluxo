@@ -4,7 +4,7 @@ description: "Planeja uma tarefa antes de implementar: pesquisa o código e a so
 argument-hint: "<id da tarefa> <o que fazer>"
 ---
 
-# /planejar
+# {{skill.planejar}}
 
 O pedido: {{argumentos}}
 
@@ -71,7 +71,7 @@ Depois de gravar, mostre o caminho e um resumo de 5 a 10 linhas. Pergunte: "apro
 `<caminho>`?" ({{pergunte}}).
 
 - **Aprovado:** troque `status: rascunho` por `status: aprovado` e marque "plano aprovado" no
-  checklist. Depois, siga com `/implementar`.
+  checklist. Depois, siga com `{{skill.implementar}}`.
 - **Pedido de mudança:** ajuste o arquivo e pergunte de novo.
 - O usuário também pode aprovar editando o arquivo (`status: aprovado`). Releia o arquivo antes de
   seguir.

@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.6.0] — 2026-10-15
+
+### Adicionado
+
+- **OpenAI Codex CLI como quarta ferramenta:** `fluxo init --tool codex`, sozinho ou com as outras.
+  Fontes: learn.chatgpt.com/docs e o código da tag `rust-v0.162.1`; o que só o código confirma está no
+  roteiro de validação (C1–C14).
+  - **Instruções em `~/.codex/AGENTS.md`.** O Codex lê um arquivo global só, então um seu dá conflito.
+  - **Agentes em `~/.codex/agents/*.toml`.** O Codex não tem campo de ferramentas: o "só leitura" do
+    architect, do researcher e do code-reviewer vai no texto.
+  - **Skills em `~/.agents/skills`,** ou em `~/.codex/skills` quando o Copilot também está em `tools`,
+    porque ele lê `~/.agents/skills` e as veria em dobro.
+  - **O panel no Codex:** hooks em `~/.codex/hooks.json`, sem o PermissionRequest. O install avisa para
+    aprová-los em `/hooks`.
+  - **O `fluxo task --tool codex`** abre com `codex --no-daemon -- '$planejar <ID>'`.
+    O `-p '/implementar …'` das outras ferramentas é recusado com a grafia certa, e `$HOME quebrou` é
+    texto, e não uma sessão chamada home.
+  - **O `doctor`** avisa de um `CODEX_HOME` fora de `~/.codex` e de um `AGENTS.override.md` não vazio,
+    que tiraria as instruções do fluxo de cena.
+- **As fontes chamam a skill pelo prefixo da ferramenta:** `{{skill.planejar}}` vira `/planejar`, ou
+  `$planejar` no Codex. As descriptions de skills e agentes passam pelo template, e o `fluxo task` usa o
+  prefixo no prompt padrão e no nome da avulsa.
+
+### Mudou
+
+- **O prompt do `fluxo task -p` vai entre aspas simples nas instruções:** com aspas duplas, o shell
+  trocaria o `$planejar` do Codex por nada.
+
 ## [0.5.0] — 2026-10-15
 
 ### Mudou (incompatível)

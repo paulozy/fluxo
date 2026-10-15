@@ -1,4 +1,4 @@
 {
   "descricao": "fluxo panel: as sessões da ferramenta ao vivo (hooks + curses), com pulo pelo tmux",
-  "requer": "tool:copilot|kiro"
+  "requer": "tool:copilot|kiro|codex"
 }

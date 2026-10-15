@@ -1,6 +1,7 @@
 {
   "nome": "Copilot CLI",
   "binario": "copilot",
+  "prefixo": "/",
   "_fonte": "https://docs.github.com/en/copilot/reference/custom-agents-configuration (aliases de tools)",
   "tools": {
     "read": [

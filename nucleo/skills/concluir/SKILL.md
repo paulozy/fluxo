@@ -4,7 +4,7 @@ description: "Fecha a entrega de uma tarefa (o passo 6 do fluxo): resumo do que 
 argument-hint: "<id da tarefa>"
 ---
 
-# /concluir
+# {{skill.concluir}}
 
 O pedido: {{argumentos}}
 
@@ -12,7 +12,7 @@ Rode depois do code review e do E2E. Siga esta ordem: o plano fecha por último,
 existem os links.
 <!-- se module:reviewer -->
 
-**Antes de tudo, a revisão:** siga a skill `/revisar-pr` com o `<id>` da tarefa. Continue só com
+**Antes de tudo, a revisão:** siga a skill `{{skill.revisar-pr}}` com o `<id>` da tarefa. Continue só com
 APROVÁVEL, ou com o ok explícito do usuário sobre o relatório. Se a revisão mudou código, o resumo,
 as docs e o CHANGELOG abaixo descrevem o código novo, e o fechamento do plano registra o que mudou
 depois do E2E.
@@ -46,7 +46,7 @@ depois do E2E.
    aspas no shell: crase e `$(…)` digitados entre aspas duplas viram comando. (O `"$(cat arquivo)"`
    acima é seguro: o shell não reexecuta o que o `cat` devolve.)
 <!-- se module:messages -->
-4. **Aviso ao time:** siga a skill `/aviso` (tom do usuário, aprovação, cópia para a área de
+4. **Aviso ao time:** siga a skill `{{skill.aviso}}` (tom do usuário, aprovação, cópia para a área de
    transferência), com o link da {{forge.pr}} e uma linha sobre o que muda. **Nada é enviado** por você.
 <!-- senao -->
 4. **Rascunho do aviso ao time.** Uma mensagem curta, no tom do usuário (informal, direto, sem

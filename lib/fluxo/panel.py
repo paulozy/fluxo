@@ -26,7 +26,11 @@ EVENTOS = {
     "kiro": {"SessionStart": "inicio", "agentSpawn": "inicio", "UserPromptSubmit": "turno",
              "userPromptSubmit": "turno", "PostToolUse": "ferramenta", "postToolUse": "ferramenta",
              "Stop": "fim_turno", "stop": "fim_turno", "SessionEnd": "fim"},
+    # sem PermissionRequest: a doc não diz se um hook que falha ou estoura o tempo ali nega a ação
+    "codex": {"SessionStart": "inicio", "UserPromptSubmit": "turno", "PostToolUse": "ferramenta",
+              "Stop": "fim_turno", "SessionEnd": "fim"},
 }
+PATCH = re.compile(r"^\*\*\* (?:Add|Update|Delete) File: (.+)$", re.M)
 DIA = re.compile(r"^eventos-\d{8}\.jsonl$")
 PARADA = 30 * 60
 SOME = 60 * 60  # sessão que acabou some do painel depois disso
@@ -38,22 +42,27 @@ def _limpo(texto, n=80):
     return "".join(c for c in str(texto).splitlines()[0] if c.isprintable())[:n] if texto else ""
 
 
+def _texto(valor):
+    patch = PATCH.search(valor)  # o apply_patch do Codex: o primeiro arquivo, e não o cabeçalho
+    return _limpo(patch.group(1) if patch else valor)
+
+
 def _alvo(entrada):
     """Uma linha curta do que a ferramenta fez: o comando, o caminho, ou o primeiro texto."""
     if isinstance(entrada, str):
         try:
             entrada = json.loads(entrada)
         except ValueError:
-            return _limpo(entrada)
+            return _texto(entrada)
     if not isinstance(entrada, dict):
         return ""
     for chave in ("command", "cmd", "path", "file_path", "filePath", "pattern", "url", "query"):
         valor = entrada.get(chave)
         if isinstance(valor, str) and valor:
-            return _limpo(valor)
+            return _texto(valor)
     for valor in entrada.values():
         if isinstance(valor, str) and valor:
-            return _limpo(valor)
+            return _texto(valor)
     return ""
 
 
@@ -267,28 +276,44 @@ def arquivos_da_ferramenta(cfg, ferr, Arquivo, skills=(), **_):
                   "resources": ["file://~/.kiro/steering/fluxo.md"] + [f"skill://~/.kiro/skills/{s['name']}/SKILL.md" for s in skills],
                   "hooks": hooks}
         return [Arquivo(".kiro/agents/fluxo.json", (json.dumps(agente, ensure_ascii=False, indent=2) + "\n").encode())], []
+    if ferr == "codex":
+        # https://learn.chatgpt.com/docs/hooks: payload em JSON no stdin; o SessionEnd aceita até 3 s.
+        # Em ordem fixa: o Codex aprova o hook pelo hash, e um arquivo que muda pede nova aprovação
+        hooks = {ev: [{"hooks": [{"type": "command", "command": _comando("codex", ev),
+                                  "timeout": 3 if ev == "SessionEnd" else 5}]}]
+                 for ev in EVENTOS["codex"]}
+        texto = json.dumps({"hooks": hooks}, indent=2) + "\n"
+        return [Arquivo(".codex/hooks.json", texto.encode())], []
     return [], []  # Claude: o requer do modulo.json o deixa de fora; lá o painel é o agent-tree
 
 
-def avisos_do_install(removidos, cam):
-    """O install vai apagar o agente `fluxo` do Kiro, mas o `panel enable` o tinha feito padrão: sem o
-    `disable` antes, o Kiro ficaria com um agente padrão que não existe."""
+def avisos_do_install(removidos, cam, gravados=()):
+    """O que o install precisa dizer sobre os hooks.
+
+    - Vai apagar o agente `fluxo` do Kiro, que o `panel enable` tinha feito padrão: sem o `disable`, o
+      Kiro ficaria com um agente padrão que não existe.
+    - Vai criar ou mudar o `hooks.json` do Codex: lá, hook novo ou mudado só roda depois de aprovado."""
+    avisos = []
     if ".kiro/agents/fluxo.json" in removidos and (cam.estado / "painel-agente-anterior.txt").exists():
-        return ["o agente fluxo é o padrão do Kiro (fluxo panel enable): rode fluxo panel disable para devolver o anterior"]
-    return []
+        avisos.append("o agente fluxo é o padrão do Kiro (fluxo panel enable): rode fluxo panel disable para devolver o anterior")
+    if ".codex/hooks.json" in gravados:
+        avisos.append("hooks do panel no Codex: aprove-os em /hooks na próxima sessão (de novo a cada mudança do fluxo)")
+    return avisos
 
 
 def ligar(cfg, cam, run):
-    """Só o Kiro V2 precisa de um passo: tornar o agente `fluxo` o padrão (e guardar o anterior)."""
+    """O Kiro V2 precisa de um passo: tornar o agente `fluxo` o padrão (e guardar o anterior). O Codex,
+    de uma aprovação em /hooks, que é do usuário."""
+    codex = "; no Codex, aprove os hooks em /hooks" if "codex" in cfg["tools"] else ""
     if not ("kiro" in cfg["tools"] and cfg["kiro"]["engine"] == "v2"):
-        return 0, "nada a ligar: os hooks já valem a partir da próxima sessão"
+        return 0, "nada a ligar: os hooks já valem a partir da próxima sessão" + codex
     anterior = (run(["kiro-cli", "settings", "chat.defaultAgent"], capture_output=True, text=True).stdout or "").strip()
     cam.estado.mkdir(parents=True, exist_ok=True)
     guardado = cam.estado / "painel-agente-anterior.txt"
     if anterior != "fluxo" and not guardado.exists():  # ligar duas vezes não pode guardar o próprio fluxo
         guardado.write_text(anterior)
     r = run(["kiro-cli", "agent", "set-default", "fluxo"], capture_output=True, text=True)
-    return (0, "agente fluxo é o padrão do Kiro agora") if r.returncode == 0 else (1, f"kiro-cli: {r.stderr.strip()}")
+    return (0, "agente fluxo é o padrão do Kiro agora" + codex) if r.returncode == 0 else (1, f"kiro-cli: {r.stderr.strip()}")
 
 
 def desligar(cfg, cam, run):

@@ -4,7 +4,7 @@ description: "Promove uma tarefa que o QA aprovou: leva os commits que entraram 
 argument-hint: "<id da tarefa> | <url da PR/MR mergeada na base>"
 ---
 
-# /promover
+# {{skill.promover}}
 
 O pedido: {{argumentos}}
 
@@ -34,7 +34,7 @@ O que esta sessão entrega, por repo da tarefa, para cada alvo em ordem ({{promo
      (`<tipo>/<id>-<slug>`).
    - **Com URLs:** cada uma é uma {{forge.pr}} mergeada na `{{git.base}}`. O `<id>` vem do plano que
      cite essa branch; sem plano, pergunte ao usuário um id curto ({{pergunte}}).
-   - **O clone de cada repo:** ache-o em `{{codigo_dir}}` pelo **remote**, como no `/pr-feedback`, e
+   - **O clone de cada repo:** ache-o em `{{codigo_dir}}` pelo **remote**, como no `{{skill.pr-feedback}}`, e
      rode `git -C "$R" fetch origin {{git.base}}`.
    - **`<head>`:** a branch da primeira {{forge.pr}} da `{{git.base}}` do repo, sem um sufixo
      `-{{git.base}}`, se houver. É `<head>-<alvo>` que você vai criar.
@@ -127,7 +127,7 @@ O que esta sessão entrega, por repo da tarefa, para cada alvo em ordem ({{promo
 
 7. **Aviso ao time.**
 <!-- se module:messages -->
-   Siga a skill `/aviso`, com uma linha por {{forge.pr}} aberta (`<head>-<alvo> → <alvo>` e o link).
+   Siga a skill `{{skill.aviso}}`, com uma linha por {{forge.pr}} aberta (`<head>-<alvo> → <alvo>` e o link).
 <!-- senao -->
    Monte um rascunho curto no tom do usuário, com uma linha por {{forge.pr}} aberta, e mostre na
    conversa para ele copiar. Nada é enviado por você.

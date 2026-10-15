@@ -1,6 +1,7 @@
 {
   "nome": "Claude Code",
   "binario": "claude",
+  "prefixo": "/",
   "tools": {
     "read": [
       "Read"

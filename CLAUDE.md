@@ -2,7 +2,7 @@
 
 ## Overview
 
-O fluxo de dev do usuário, portável para Claude Code, Copilot CLI e Kiro CLI, em outras empresas. É
+O fluxo de dev do usuário, portável para Claude Code, Copilot CLI, Kiro CLI e Codex CLI, em outras empresas. É
 instalado no nível do usuário e nunca escreve no repo da empresa.
 
 ## Tech Stack
@@ -19,7 +19,7 @@ instalado no nível do usuário e nunca escreve no repo da empresa.
 fluxo                 # entrada: põe lib/ no sys.path
 lib/fluxo/            # config, fonte (frontmatter), render (template), montar (função pura: fontes →
                       # arquivos), instalar (manifesto), doctor, varredura, empacotar, cli
-lib/fluxo/ferramentas # claude.py, copilot.py, kiro.py: onde cada coisa mora e em que formato
+lib/fluxo/ferramentas # claude.py, copilot.py, kiro.py, codex.py: onde cada coisa mora e em que formato
 nucleo/               # fontes: instrucoes/NN-*.md, agentes/*.md, skills/<n>/SKILL.md
 adaptadores/          # dados: tools e modelos por ferramenta; variáveis por forge
 modulos/<n>/          # modulo.json (descricao, requer), instrucoes/, skills/, agentes/ do módulo:

@@ -57,6 +57,39 @@ class Doctor(unittest.TestCase):
                 self.assertIn((nivel, f"{falta} não está no PATH"), r)
                 self.assertIn("copilot, claude (padrão: copilot)", r[1][1])
 
+    def test_codex_home_e_agents_override(self):
+        cam = escrever_config(self.home, "codex")
+        cfg = config.carregar(cam, montar.modulos_existentes(RAIZ))
+
+        def avisos(**env):
+            r = doctor.checar(cam, RAIZ, cfg=cfg, which=lambda b: f"/usr/bin/{b}", run=lambda *a, **k: Resp(0, "1.0\n"),
+                              conectar=lambda *a: io.BytesIO(), versao=(3, 9), env=dict(env, PATH=""))
+            return [t for n, t in r if n == doctor.AVISO and ("CODEX_HOME" in t or "override" in t)]
+
+        self.assertEqual(avisos(), [])
+        self.assertEqual(avisos(CODEX_HOME="~/.codex/"), [])  # o mesmo lugar, escrito de outro jeito
+        self.assertEqual(len(avisos(CODEX_HOME=str(self.home / "outro"))), 1)
+        override = self.home / ".codex" / "AGENTS.override.md"
+        override.parent.mkdir(parents=True, exist_ok=True)
+        override.write_text("\n")
+        self.assertEqual(avisos(), [])  # vazio: o Codex segue para o AGENTS.md
+        override.write_text("minhas regras\n")
+        self.assertIn("não está vazio", avisos()[0])
+        override.write_bytes("regras em latin-1: ação\n".encode("latin-1"))  # não pode derrubar o doctor
+        self.assertIn("não está vazio", avisos()[0])
+        # o override que conta é o do CODEX_HOME efetivo, e não o do ~/.codex
+        outro = self.home / "outro"
+        outro.mkdir()
+        self.assertEqual([t for t in avisos(CODEX_HOME=str(outro)) if "override" in t], [])
+        (outro / "AGENTS.override.md").write_text("do outro\n")
+        self.assertIn(str(outro / "AGENTS.override.md"), " ".join(avisos(CODEX_HOME=str(outro))))
+        # sem o codex em tools, nada disso é checado
+        cam = escrever_config(self.home, "claude")
+        r = doctor.checar(cam, RAIZ, cfg=config.carregar(cam), which=lambda b: f"/usr/bin/{b}",
+                          run=lambda *a, **k: Resp(0, "1.0\n"), conectar=lambda *a: io.BytesIO(), versao=(3, 9),
+                          env={"PATH": "", "CODEX_HOME": str(outro)})
+        self.assertFalse([t for n, t in r if "CODEX_HOME" in t or "override" in t])
+
     def test_vpn_desligada_e_aviso(self):
         def recusa(*a):
             raise OSError("timed out")

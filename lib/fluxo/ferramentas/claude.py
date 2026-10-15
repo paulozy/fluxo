@@ -16,6 +16,6 @@ def agente(ag, Arquivo, motor=None, permitidas=()):
     return Arquivo(f".claude/agents/{ag['name']}.md", fonte.escrever(meta, ag["corpo"]).encode())
 
 
-def skill(sk, Arquivo):
+def skill(sk, Arquivo, **_):
     meta = {"name": sk["name"], "description": sk["description"], "argument-hint": sk["argument-hint"]}
     return Arquivo(f".claude/skills/{sk['name']}/SKILL.md", fonte.escrever(meta, sk["corpo"]).encode())

@@ -4,7 +4,7 @@ description: "Revisão de código das mudanças: delega ao subagente code-review
 argument-hint: "[o que revisar]"
 ---
 
-# /revisar
+# {{skill.revisar}}
 
 O pedido: {{argumentos}}
 

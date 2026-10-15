@@ -40,8 +40,14 @@ CENARIOS = {
     # duas ferramentas, com o copilot de padrão: o panel só vale para ele, e o watch é da máquina
     "copilot-claude": {"tools": ["copilot", "claude"], "forge": "github", "os": "linux",
                        "modules": ["messages", "panel", "promote", "reviewer", "task", "lock", "watch"]},
+    # o Codex sozinho: as skills no lugar oficial, ~/.agents/skills
+    "codex": {"tools": ["codex"], "forge": "github", "os": "linux"},
+    # com o copilot junto, as skills do Codex vão para ~/.codex/skills (o Copilot também lê ~/.agents/skills)
+    "copilot-codex": {"tools": ["copilot", "codex"], "forge": "gitlab", "os": "mac", "gitlab": {"host": "gitlab.exemplo.com"},
+                      "modules": ["messages", "panel", "promote", "reviewer", "task", "lock", "watch"]},
 }
-PASTAS_FERRAMENTA = (".claude", ".copilot", ".kiro", "Library", ".config/systemd")  # + agendamento do watch
+PASTAS_FERRAMENTA = (".claude", ".copilot", ".kiro", ".codex", ".agents", "Library",
+                     ".config/systemd")  # + agendamento do watch
 
 
 def escrever_config(home, cenario, **extra):

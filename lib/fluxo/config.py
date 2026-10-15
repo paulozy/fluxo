@@ -8,7 +8,7 @@ import platform
 import re
 from pathlib import Path
 
-TOOLS = ("claude", "copilot", "kiro")  # a primeira de `tools` na config é a padrão do `fluxo task`
+TOOLS = ("claude", "copilot", "kiro", "codex")  # a primeira de `tools` na config é a padrão do `fluxo task`
 EIXOS = {
     "forge": ("github", "gitlab"),
     "tracker": ("none", "jira"),

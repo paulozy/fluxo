@@ -4,7 +4,7 @@ description: "Mapeia o código antes de agir: delega ao subagente researcher e t
 argument-hint: "<o que pesquisar>"
 ---
 
-# /pesquisar
+# {{skill.pesquisar}}
 
 O pedido: {{argumentos}}
 

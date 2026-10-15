@@ -4,7 +4,7 @@ description: "Redige uma mensagem para o time no tom do usuário (aviso de PR, p
 argument-hint: "<para quem e sobre o quê>"
 ---
 
-# /aviso
+# {{skill.aviso}}
 
 O pedido: {{argumentos}}
 

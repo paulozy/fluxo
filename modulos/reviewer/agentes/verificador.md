@@ -1,6 +1,6 @@
 ---
 name: verificador
-description: "Checks a branch diff against the approved plan: does it deliver the premise, which acceptance criteria are not covered by a test, what went out of scope, and which risks have no coverage. Use in /revisar-pr, isolated from the code-reviewer."
+description: "Checks a branch diff against the approved plan: does it deliver the premise, which acceptance criteria are not covered by a test, what went out of scope, and which risks have no coverage. Use in {{skill.revisar-pr}}, isolated from the code-reviewer."
 tools: [read, search, shell]
 model: medium
 ---

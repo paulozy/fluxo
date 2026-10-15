@@ -15,7 +15,7 @@ from . import config as cfgmod
 from . import instalar, messages
 
 OK, AVISO, FALHA = "OK", "AVISO", "FALHA"
-BINARIOS = {"claude": "claude", "copilot": "copilot", "kiro": "kiro-cli"}
+BINARIOS = {"claude": "claude", "copilot": "copilot", "kiro": "kiro-cli", "codex": "codex"}
 FORGE_CLI = {"github": "gh", "gitlab": "glab"}
 
 
@@ -51,12 +51,14 @@ def checar(caminhos, raiz, cfg=None, erro_cfg=None, run=subprocess.run, which=sh
         out.append((OK if cod == 0 else AVISO, f"{binario}: {saida.strip().splitlines()[0] if saida.strip() else '?'}"))
         if tool == "kiro":
             out += _kiro_agentes(caminhos, run)
+    if "codex" in tools:
+        out += _codex(caminhos, env)
 
     out.append((OK, "git") if which("git") else (FALHA, "git não está no PATH"))
     cli = FORGE_CLI[cfg["forge"]]
     host = "github.com" if cfg["forge"] == "github" else (cfg.get("gitlab") or {}).get("host", "")
     if not which(cli):
-        out.append((AVISO, f"{cli} não está no PATH: a abertura de {('PR' if cli == 'gh' else 'MR')} e o /pr-feedback precisam dele"))
+        out.append((AVISO, f"{cli} não está no PATH: a abertura de {('PR' if cli == 'gh' else 'MR')} e a skill pr-feedback precisam dele"))
     else:
         argv = [cli, "auth", "status"] + (["--hostname", host] if host and cli == "glab" else [])
         cod, saida = _rodar(run, argv)
@@ -102,6 +104,26 @@ def checar(caminhos, raiz, cfg=None, erro_cfg=None, run=subprocess.run, which=sh
         if editado:
             texto += f"; {len(editado)} editados à mão ({', '.join(editado[:3])}…)"
         out.append((nivel, texto))
+    return out
+
+
+def _codex(caminhos, env):
+    """O fluxo grava no ~/.codex. Um CODEX_HOME em outro lugar, ou um AGENTS.override.md não vazio (que o
+    Codex lê no lugar do AGENTS.md), deixam as instruções do fluxo de fora sem erro nenhum.
+    https://learn.chatgpt.com/docs/agent-configuration/agents-md e /docs/config-file/environment-variables"""
+    out = []
+    padrao = (caminhos.home / ".codex").resolve()
+    valor = env.get("CODEX_HOME") or ""
+    lido = (caminhos.home / valor[1:].lstrip("/")) if valor.startswith("~") else Path(valor) if valor else padrao
+    lido = lido.resolve()
+    if lido != padrao:
+        out.append((AVISO, f"CODEX_HOME={valor}: o fluxo instala em ~/.codex, e o Codex vai ler {lido}"))
+    override = lido / "AGENTS.override.md"
+    try:
+        if override.read_text(encoding="utf-8", errors="replace").strip():
+            out.append((AVISO, f"{override} não está vazio: o Codex lê só ele, e as instruções do fluxo ficam de fora"))
+    except OSError:  # não existe (o normal), ou não deu para ler
+        pass
     return out
 
 

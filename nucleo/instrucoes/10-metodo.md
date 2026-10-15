@@ -4,11 +4,11 @@
 
 Para qualquer tarefa não trivial, siga o ciclo de três fases:
 
-1. **Pesquisar** (`/pesquisar`): o subagente `researcher` mapeia o código antes de agir. O usuário
+1. **Pesquisar** (`{{skill.pesquisar}}`): o subagente `researcher` mapeia o código antes de agir. O usuário
    revisa antes de seguir.
-2. **Planejar** (`/planejar`): o `architect` pesquisa a solução estabelecida e o plano vai para um
+2. **Planejar** (`{{skill.planejar}}`): o `architect` pesquisa a solução estabelecida e o plano vai para um
    arquivo. Espere a aprovação.
-3. **Implementar** (`/implementar`): fase por fase, com o `test-runner` depois de cada uma. Nunca
+3. **Implementar** (`{{skill.implementar}}`): fase por fase, com o `test-runner` depois de cada uma. Nunca
    tudo de uma vez.
 
 Antes de implementar algo não trivial, consulte o `architect`: existe algoritmo, padrão ou

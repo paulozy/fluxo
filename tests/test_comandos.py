@@ -4,6 +4,7 @@ import json
 import plistlib
 import re
 import shlex
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
@@ -74,7 +75,7 @@ class ComandosGravados(unittest.TestCase):
                     with self.subTest(cenario=cenario, arquivo=rel):
                         self.assertParseia(argv, rel)
         # se a busca deixar de achar um deles, o teste não valeria para ele
-        self.assertLessEqual({".copilot/hooks/fluxo.json", ".kiro/hooks/fluxo.json", ".kiro/agents/fluxo.json",
+        self.assertLessEqual({".copilot/hooks/fluxo.json", ".kiro/hooks/fluxo.json", ".kiro/agents/fluxo.json", ".codex/hooks.json",
                               "Library/LaunchAgents/dev.fluxo.watch.plist", ".config/systemd/user/fluxo-watch.service"},
                              com_chamada)
 
@@ -104,6 +105,33 @@ class GrafiaAntiga(unittest.TestCase):
                     if any(r.search(linha) for r in ANTIGOS):
                         achados.append(f"{p.relative_to(RAIZ)}:{n}: {linha.strip()}")
         self.assertEqual(achados, [])
+
+
+class ChamadaDeSkill(unittest.TestCase):
+    def test_fontes_chamam_a_skill_pelo_prefixo_da_ferramenta(self):
+        """`/planejar` cru sairia errado no Codex (lá é `$planejar`): a fonte usa `{{skill.planejar}}`."""
+        chamada = re.compile(r"(?<![\w./~-])/(" + "|".join(map(re.escape, montar.nomes_de_skills(RAIZ))) + r")(?![\w-])")
+        fontes = list((RAIZ / "nucleo").rglob("*.md")) + list((RAIZ / "adaptadores").rglob("*.json")) + [
+            p for sub in ("instrucoes", "skills", "agentes") for p in (RAIZ / "modulos").glob(f"*/{sub}/**/*.md")]
+        achados = [f"{p.relative_to(RAIZ)}:{n}: {linha.strip()}" for p in sorted(fontes)
+                   for n, linha in enumerate(p.read_text(encoding="utf-8").splitlines(), 1) if chamada.search(linha)]
+        self.assertGreater(len(fontes), 20)
+        self.assertEqual(achados, [])
+
+    def test_o_prefixo_vem_do_adaptador(self):
+        with tempfile.TemporaryDirectory() as d:
+            repo = Path(d) / "repo"
+            shutil.copytree(RAIZ, repo, ignore=shutil.ignore_patterns(".git", "esperado", "__pycache__"))
+            adapt = repo / "adaptadores" / "ferramenta" / "claude.json"
+            adapt.write_text(json.dumps(dict(json.loads(adapt.read_text()), prefixo="%")))
+            cam = escrever_config(Path(d) / "casa", "claude-tudo")
+            arquivos, _ = montar.montar(config.carregar(cam, montar.modulos_existentes(repo)), repo, cam)
+            gerado = {a.rel: a.conteudo.decode() for a in arquivos}
+        implementar = gerado[".claude/skills/implementar/SKILL.md"]
+        self.assertIn("# %implementar", implementar)
+        self.assertIn("%planejar", implementar.split("---")[1])  # a description também passa pelo template
+        self.assertIn("%revisar-pr", gerado[".claude/agents/verificador.md"].split("---")[1])
+        self.assertNotRegex("\n".join(gerado.values()), r"(?<![\w./~-])/(planejar|implementar|concluir)(?![\w-])")
 
 
 class Modulos(unittest.TestCase):

@@ -145,6 +145,21 @@ class Instalacao(unittest.TestCase):
             arquivos, avisos = montar.montar(config.carregar(cam, montar.modulos_existentes(RAIZ)), RAIZ, cam)
             return {a.rel: a.conteudo.decode() for a in arquivos}, avisos
 
+    def test_hooks_do_codex(self):
+        gerado, _ = self.gerar("codex")
+        hooks = json.loads(gerado[".codex/hooks.json"])["hooks"]
+        # sem PermissionRequest: a doc não diz se um hook que falha ali nega a ação
+        self.assertEqual(list(hooks), ["SessionStart", "UserPromptSubmit", "PostToolUse", "Stop", "SessionEnd"])
+        for evento, grupos in hooks.items():
+            with self.subTest(evento=evento):
+                (grupo,) = grupos
+                self.assertNotIn("matcher", grupo)
+                (h,) = grupo["hooks"]
+                self.assertEqual(h["type"], "command")
+                self.assertIn(f"hook --tool codex --event {evento}", h["command"])
+                self.assertLessEqual(h["timeout"], 3 if evento == "SessionEnd" else 5)
+        self.assertEqual(set(hooks), set(panel.EVENTOS["codex"]))
+
     def test_copilot_nunca_pre_tool_use(self):
         gerado, _ = self.gerar("copilot")
         hooks = json.loads(gerado[".copilot/hooks/fluxo.json"])["hooks"]
@@ -168,6 +183,36 @@ class Instalacao(unittest.TestCase):
         # o fluxo não mexe no settings.json do Claude: lá o painel é o agent-tree
         with self.assertRaisesRegex(montar.ErroMontagem, "requer tool:copilot|kiro"):
             self.gerar("claude")
+
+
+class Codex(unittest.TestCase):
+    def test_normaliza_o_payload(self):
+        patch = {"session_id": "cx-1", "hook_event_name": "PostToolUse", "tool_name": "apply_patch", "cwd": "/r",
+                 "tool_input": "*** Begin Patch\n*** Update File: src/a.py\n@@\n-x\n+y\n*** End Patch"}
+        e = panel.normalizar("codex", None, patch, env={"TMUX_PANE": "%2"}, agora=T0)
+        self.assertEqual((e["sessao"], e["evento"], e["tool"], e["alvo"], e["pane"]),
+                         ("cx-1", "ferramenta", "apply_patch", "src/a.py", "%2"))
+        bash = panel.normalizar("codex", "PostToolUse", {"session_id": "cx-1", "tool_name": "Bash",
+                                                          "tool_input": {"command": "npm test"}}, env={})
+        self.assertEqual(bash["alvo"], "npm test")
+        self.assertEqual(panel.normalizar("codex", "Stop", {"session_id": "cx-1"}, env={})["evento"], "fim_turno")
+        for entrada, alvo in (("*** Begin Patch\n*** Add File: novo.py\n+x\n*** End Patch", "novo.py"),
+                              ({"input": "*** Begin Patch\n*** Delete File: velho.py\n*** End Patch"}, "velho.py")):
+            with self.subTest(alvo=alvo):
+                e = panel.normalizar("codex", "PostToolUse", {"session_id": "s", "tool_input": entrada}, env={})
+                self.assertEqual(e["alvo"], alvo)
+
+    def test_ligar_lembra_do_hooks(self):
+        with tempfile.TemporaryDirectory() as d:
+            run = lambda argv, **kw: subprocess.CompletedProcess(argv, 0, "", "")
+            for tools, trechos in ((["codex"], ["nada a ligar", "/hooks"]),
+                                   (["kiro", "codex"], ["agente fluxo é o padrão do Kiro agora", "/hooks"])):
+                with self.subTest(tools=tools):
+                    cam = escrever_config(d, "kiro-v2", tools=tools, modules=["panel"])
+                    code, msg = panel.ligar(config.carregar(cam, montar.modulos_existentes(RAIZ)), cam, run)
+                    self.assertEqual(code, 0)
+                    for t in trechos:
+                        self.assertIn(t, msg)
 
 
 class LigarKiroV2(unittest.TestCase):

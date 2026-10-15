@@ -40,9 +40,16 @@ class Template(unittest.TestCase):
         self.assertEqual(r("<!-- se\tforge:gitlab -->\nx\n  <!-- senao -->\ny\n<!-- fim -->\n"), "x\n")
 
     def test_chaves_fora_do_formato_e_erro(self):
-        for texto in ("{{git-base}}", "{{ forge.pr }", "{{forge.pr|x}}", "fim }}"):
+        for texto in ("{{git base}}", "{{ forge.pr }", "{{forge.pr|x}}", "fim }}"):
             with self.subTest(texto=texto), self.assertRaisesRegex(render.ErroTemplate, "chaves duplas"):
                 r(texto)
+
+    def test_variavel_com_hifen(self):
+        """`{{skill.pr-feedback}}`: o hífen vale no nome, e um nome que não existe continua sendo erro."""
+        ctx = dict(CTX, skill={"pr-feedback": "/pr-feedback"})
+        self.assertEqual(render.renderizar("{{skill.pr-feedback}}", ctx, EIXOS, VALIDOS), "/pr-feedback")
+        with self.assertRaisesRegex(render.ErroTemplate, "desconhecida"):
+            r("{{git-base}}")
 
     def test_variavel_do_ramo_nao_usado_tambem_e_validada(self):
         with self.assertRaisesRegex(render.ErroTemplate, "desconhecida"):
@@ -99,6 +106,7 @@ class Config(unittest.TestCase):
     def test_tools(self):
         base = {"version": 1, "forge": "github", "os": "linux"}
         self.assertEqual(config.validar(dict(base, tools=["copilot", "claude"]))["tools"], ["copilot", "claude"])
+        self.assertEqual(config.validar(dict(base, tools=["codex"]))["tools"], ["codex"])
         for tools in ([], ["claude", "claude"], ["cursor"], "claude", None):
             with self.subTest(tools=tools), self.assertRaisesRegex(config.ErroConfig, "tools"):
                 config.validar(dict(base, tools=tools))

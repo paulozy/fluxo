@@ -1,6 +1,7 @@
 {
   "nome": "Kiro CLI",
   "binario": "kiro-cli",
+  "prefixo": "/",
   "_fonte": "https://kiro.dev/docs/custom-agents/configuration-reference; os nomes do v2 vêm do port antigo (a validar no WSL)",
   "tools": {
     "v2": {

@@ -1,0 +1,38 @@
+{
+  "nome": "Codex CLI",
+  "binario": "codex",
+  "prefixo": "$",
+  "_fonte": "https://learn.chatgpt.com/docs/build-skills (skill chamada com $nome); os nomes de tool só documentam: o agente do Codex não restringe ferramentas (https://learn.chatgpt.com/docs/agent-configuration/subagents)",
+  "tools": {
+    "read": [
+      "exec_command"
+    ],
+    "search": [
+      "exec_command"
+    ],
+    "edit": [
+      "apply_patch"
+    ],
+    "shell": [
+      "exec_command"
+    ],
+    "web": [
+      "web_search"
+    ],
+    "agent": [
+      "spawn_agent"
+    ]
+  },
+  "modelos": {},
+  "vars": {
+    "argumentos": "o texto que veio junto do pedido (se não veio nada, pergunte)",
+    "pergunte": "faça a pergunta na conversa e pare o turno até a resposta"
+  },
+  "lancar": [
+    "codex",
+    "--no-daemon",
+    "--",
+    "{prompt}"
+  ],
+  "_lancar": "codex-rs/tui/src/cli.rs na tag rust-v0.162.1: sem flag de id ou nome; o --no-daemon deixa a sessão no processo do pane, para o hook herdar o TMUX_PANE (a validar)"
+}

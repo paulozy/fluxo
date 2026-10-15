@@ -36,7 +36,7 @@ class Formatos(unittest.TestCase):
                     self.assertEqual(meta["name"], Path(rel).parent.name)  # o Kiro exige igual à pasta
                     self.assertTrue(0 < len(meta["description"]) <= 1024)
                     self.assertNotIn("requer", meta)  # chave nossa, não vai para a ferramenta
-                    if cenario.startswith("kiro"):
+                    if rel.startswith(".kiro/"):
                         self.assertEqual(set(meta), {"name", "description"})
 
     def test_agentes_copilot_e_claude(self):
@@ -51,14 +51,14 @@ class Formatos(unittest.TestCase):
                 self.assertTrue(rel.endswith(sufixo))
                 self.assertTrue(meta["description"])
                 self.assertTrue(corpo.strip())
-                if cenario.startswith("copilot"):
-                    self.assertNotIn("model", meta)  # sem `modelos` na config: herda o da sessão
+                if rel.startswith(".copilot/"):
+                    self.assertNotIn("model", meta)  # sem `models` na config: herda o da sessão
                     self.assertTrue(set(meta["tools"]) <= {"read", "search", "edit", "execute", "web", "agent"})
                 else:
                     self.assertIn(meta["model"], ("opus", "sonnet", "haiku"))
 
     def test_agentes_kiro(self):
-        for motor, extra in (("v2", {}), ("v3", {}), ("v2", {"modulos": ["revisor"]})):
+        for motor, extra in (("v2", {}), ("v3", {}), ("v2", {"modules": ["reviewer"]})):
             gerado, avisos = gerar(f"kiro-{motor}", **extra)
             agentes = {rel: json.loads(t) for rel, t in gerado.items() if rel.startswith(".kiro/agents/")}
             self.assertEqual(len(agentes), 8 if extra else 7)
@@ -82,7 +82,7 @@ class Formatos(unittest.TestCase):
                     self.assertNotIn("{{", texto)
                     self.assertNotRegex(texto, r"<!-- (se|senao|fim)\b")
                     self.assertNotRegex(texto, r"/home/|/Users/")
-                    if not cenario.startswith("claude"):
+                    if not rel.startswith(".claude/"):
                         self.assertNotIn("$ARGUMENTS", texto)
 
     def test_forge_certo_em_cada_cenario(self):
@@ -94,7 +94,7 @@ class Formatos(unittest.TestCase):
         feedback = copilot[".copilot/skills/pr-feedback/SKILL.md"]
         self.assertIn("glab api --hostname gitlab.exemplo.com", feedback)
         self.assertNotIn("gh api", feedback)
-        self.assertNotIn("/revisar-pr", concluir)  # módulo revisor desligado
+        self.assertNotIn("/revisar-pr", concluir)  # módulo reviewer desligado
         claude, _ = gerar("claude")
         self.assertIn("gh pr create --base develop", claude[".claude/skills/concluir/SKILL.md"])
         self.assertNotIn("glab", claude[".claude/skills/pr-feedback/SKILL.md"])
@@ -138,7 +138,7 @@ class Formatos(unittest.TestCase):
             self.assertLess(concluir.index("/revisar-pr"), concluir.index("1. **Resumo"))
             self.assertLess(concluir.index("/revisar-pr"), concluir.index("Push da branch"))
 
-    def test_promover(self):
+    def test_promote(self):
         tudo, _ = gerar("copilot-tudo")
         skill = tudo[".copilot/skills/promover/SKILL.md"]
         self.assertIn("(staging, main)", skill)
@@ -151,17 +151,17 @@ class Formatos(unittest.TestCase):
         self.assertIn("merge-requests/<iid>/head", skill)
         instr = tudo[".copilot/instructions/fluxo.instructions.md"]
         self.assertIn("## Depois do QA: promoção para staging, main", instr)
-        claude, _ = gerar("claude-promover")
+        claude, _ = gerar("claude-promote")
         gh = claude[".claude/skills/promover/SKILL.md"]
         self.assertIn("(main)", gh)  # o padrão
         self.assertIn("pull/<N>/head", gh)
-        self.assertNotIn("/aviso", gh)  # sem o módulo mensagens: o rascunho
+        self.assertNotIn("/aviso", gh)  # sem o módulo messages: o rascunho
         self.assertIn("Monte um rascunho", gh)
         sem, _ = gerar("copilot")
         self.assertNotIn(".copilot/skills/promover/SKILL.md", sem)
         self.assertNotIn("Depois do QA", sem[".copilot/instructions/fluxo.instructions.md"])
 
-    def test_revisor_ligado(self):
+    def test_reviewer_ligado(self):
         tudo, _ = gerar("copilot-tudo")
         self.assertIn("/revisar-pr", tudo[".copilot/skills/concluir/SKILL.md"])
         self.assertIn("glab mr diff", tudo[".copilot/skills/revisar-pr/SKILL.md"])

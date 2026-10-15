@@ -3,7 +3,7 @@ name: "promover"
 description: "Promove uma tarefa que o QA aprovou: leva os commits que entraram na base de desenvolvimento para as bases seguintes, em branches <head>-<alvo> por cherry-pick, roda os testes, abre uma PR/MR por base (com aprovação do usuário) e prepara o aviso ao time. Use quando o usuário disser que o QA aprovou."
 argument-hint: "<id da tarefa> | <url da PR/MR mergeada na base>"
 ---
-<!-- gerado pelo fluxo a partir de modulos/promover/skills/promover/SKILL.md: edite a fonte e rode `fluxo install` -->
+<!-- gerado pelo fluxo a partir de modulos/promote/skills/promover/SKILL.md: edite a fonte e rode `fluxo install` -->
 # /promover
 
 O pedido: $ARGUMENTS

@@ -46,6 +46,17 @@ class Doctor(unittest.TestCase):
         r = self.checar("copilot", which=lambda b: None if b == "copilot" else f"/usr/bin/{b}")
         self.assertIn((doctor.FALHA, "copilot não está no PATH"), r)
 
+    def test_so_a_ferramenta_padrao_e_obrigatoria(self):
+        cam = escrever_config(self.home, "copilot-claude")
+        cfg = config.carregar(cam, montar.modulos_existentes(RAIZ))
+        for falta, nivel in (("claude", doctor.AVISO), ("copilot", doctor.FALHA)):
+            with self.subTest(falta=falta):
+                r = doctor.checar(cam, RAIZ, cfg=cfg, which=lambda b: None if b == falta else f"/usr/bin/{b}",
+                                  run=lambda *a, **k: Resp(0, "1.0\n"), conectar=lambda *a: io.BytesIO(),
+                                  versao=(3, 9), env={"PATH": ""})
+                self.assertIn((nivel, f"{falta} não está no PATH"), r)
+                self.assertIn("copilot, claude (padrão: copilot)", r[1][1])
+
     def test_vpn_desligada_e_aviso(self):
         def recusa(*a):
             raise OSError("timed out")
@@ -83,8 +94,8 @@ class Doctor(unittest.TestCase):
         self.assertTrue(any(n == doctor.FALHA and t.startswith("tmux não está") for n, t in r))
         self.assertTrue(any(n == doctor.AVISO and t.startswith("sem pbcopy") for n, t in r))
 
-    def test_so_a_trava_sem_tmux_e_aviso(self):
-        cam = escrever_config(self.home, "copilot", modulos=["trava"])
+    def test_so_o_lock_sem_tmux_e_aviso(self):
+        cam = escrever_config(self.home, "copilot", modules=["lock"])
         r = doctor.checar(cam, RAIZ, cfg=config.carregar(cam, montar.modulos_existentes(RAIZ)),
                           which=lambda b: None if b == "tmux" else f"/usr/bin/{b}",
                           run=lambda *a, **k: Resp(0, "1.0\n"), conectar=lambda *a: io.BytesIO(), versao=(3, 9),
@@ -115,7 +126,7 @@ class Empacotar(unittest.TestCase):
                 z.extractall(d / "extraido")
             home = d / "casa"
             fluxo = d / "extraido" / "fluxo" / "fluxo"
-            for argv in (["init", "--ferramenta", "kiro", "--forge", "github", "--so", "wsl"], ["install"]):
+            for argv in (["init", "--tool", "kiro", "--forge", "github", "--os", "wsl"], ["install"]):
                 r = subprocess.run([sys.executable, str(fluxo), *argv, "--home", str(home)],
                                    capture_output=True, text=True, timeout=60)
                 self.assertEqual(r.returncode, 0, r.stdout + r.stderr)

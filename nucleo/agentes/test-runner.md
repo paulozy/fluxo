@@ -2,7 +2,7 @@
 name: test-runner
 description: "Runs tests and reports results. Use proactively after implementing code or making modifications. Isolates verbose test output from the main context."
 tools: [read, search, shell]
-modelo: leve
+model: light
 ---
 
 You are a test executor. Your job is to run tests and report concisely.

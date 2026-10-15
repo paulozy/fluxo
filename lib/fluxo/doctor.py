@@ -12,7 +12,7 @@ import sys
 from pathlib import Path
 
 from . import config as cfgmod
-from . import instalar, mensagens
+from . import instalar, messages
 
 OK, AVISO, FALHA = "OK", "AVISO", "FALHA"
 BINARIOS = {"claude": "claude", "copilot": "copilot", "kiro": "kiro-cli"}
@@ -36,18 +36,20 @@ def checar(caminhos, raiz, cfg=None, erro_cfg=None, run=subprocess.run, which=sh
     if cfg is None:
         out.append((FALHA, f"config: {erro_cfg}"))
         return out
-    out.append((OK, f"config {caminhos.config}: {cfg['ferramenta']}, {cfg['forge']}, {cfg['so']}"))
+    tools = cfg["tools"]
+    out.append((OK, f"config {caminhos.config}: {', '.join(tools)} (padrão: {tools[0]}), {cfg['forge']}, {cfg['os']}"))
     detectado = cfgmod.detectar_so()
-    if detectado != cfg["so"]:
-        out.append((AVISO, f"so na config é {cfg['so']}, mas esta máquina parece {detectado}"))
+    if detectado != cfg["os"]:
+        out.append((AVISO, f"os na config é {cfg['os']}, mas esta máquina parece {detectado}"))
 
-    binario = BINARIOS[cfg["ferramenta"]]
-    if not which(binario):
-        out.append((FALHA, f"{binario} não está no PATH"))
-    else:
+    for tool in tools:  # só a padrão é obrigatória: as outras são para quando ela não puder
+        binario = BINARIOS[tool]
+        if not which(binario):
+            out.append((FALHA if tool == tools[0] else AVISO, f"{binario} não está no PATH"))
+            continue
         cod, saida = _rodar(run, [binario, "--version"])
         out.append((OK if cod == 0 else AVISO, f"{binario}: {saida.strip().splitlines()[0] if saida.strip() else '?'}"))
-        if cfg["ferramenta"] == "kiro":
+        if tool == "kiro":
             out += _kiro_agentes(caminhos, run)
 
     out.append((OK, "git") if which("git") else (FALHA, "git não está no PATH"))
@@ -68,11 +70,11 @@ def checar(caminhos, raiz, cfg=None, erro_cfg=None, run=subprocess.run, which=sh
         except OSError as exc:
             out.append((AVISO, f"{host}:443 inalcançável ({exc}): VPN desligada?"))
 
-    modulos = cfg.get("modulos", [])
-    if ("task" in modulos or "trava" in modulos) and not which("tmux"):
+    modulos = cfg.get("modules", [])
+    if ("task" in modulos or "lock" in modulos) and not which("tmux"):
         out.append((FALHA if "task" in modulos else AVISO,
                     "tmux não está no PATH: o `fluxo task` precisa dele, e a trava usa o pane para saber se o dono vive"))
-    if "mensagens" in modulos and mensagens.comando_copiar(cfg["so"], which) is None:
+    if "messages" in modulos and messages.comando_copiar(cfg["os"], which) is None:
         out.append((AVISO, "sem pbcopy/clip.exe/wl-copy/xclip/xsel: o `fluxo msg` só vai guardar o texto, sem copiar"))
 
     pasta_bin = str(caminhos.home / ".local" / "bin")

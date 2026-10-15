@@ -8,28 +8,28 @@ import platform
 import re
 from pathlib import Path
 
+TOOLS = ("claude", "copilot", "kiro")  # a primeira de `tools` na config é a padrão do `fluxo task`
 EIXOS = {
-    "ferramenta": ("claude", "copilot", "kiro"),
     "forge": ("github", "gitlab"),
-    "tracker": ("nenhum", "jira"),
-    "chat": ("rascunho", "slack"),
-    "so": ("linux", "mac", "wsl"),
+    "tracker": ("none", "jira"),
+    "chat": ("draft", "slack"),
+    "os": ("linux", "mac", "wsl"),
 }
-MOTORES = ("v2", "v3")  # Kiro CLI: o V2 é o padrão do 2.x; o V3 entra com --v3
-NIVEIS = ("forte", "medio", "leve")  # modelo abstrato dos agentes
+ENGINES = ("v2", "v3")  # Kiro CLI: o V2 é o padrão do 2.x; o V3 entra com --v3
+NIVEIS = ("strong", "medium", "light")  # modelo abstrato dos agentes
 BRANCH = re.compile(r"[A-Za-z0-9][A-Za-z0-9._/-]*")  # nome de branch simples: sem espaço nem caractere de shell
 
 PADRAO = {
-    "versao": 1,
-    "tracker": "nenhum",
-    "chat": "rascunho",
-    "modulos": [],
+    "version": 1,
+    "tracker": "none",
+    "chat": "draft",
+    "modules": [],
     "git": {"base": "develop"},
-    "codigo_dir": "~/code",
-    "modelos": {},
-    "task": {"max": 2},
-    "vigia": {"intervalo": 300},
-    "promover": {"alvos": ["main"]},  # as bases depois da git.base, em ordem (ex.: staging, main)
+    "code_dir": "~/code",
+    "models": {},
+    "task": {"max": 2, "launch": {}},
+    "watch": {"interval": 300},
+    "promote": {"targets": ["main"]},  # as bases depois da git.base, em ordem (ex.: staging, main)
 }
 
 
@@ -87,32 +87,37 @@ def validar(cfg, modulos_existentes=()):
     out = json.loads(json.dumps(PADRAO))
     out.update(cfg)
     problemas = []
-    if out.get("versao") != 1:
-        problemas.append(f"versao {out.get('versao')!r} desconhecida (esperado 1)")
+    if out.get("version") != 1:
+        problemas.append(f"version {out.get('version')!r} desconhecida (esperado 1)")
+    tools = out.get("tools")
+    if (not isinstance(tools, list) or not tools or any(t not in TOOLS for t in tools)
+            or len(set(tools)) != len(tools)):
+        problemas.append(f"tools: lista, sem repetir, com {', '.join(TOOLS)}; a primeira é a padrão")
+        tools = []
     for eixo, valores in EIXOS.items():
-        if eixo == "so" and not out.get("so"):
-            out["so"] = detectar_so()
+        if eixo == "os" and not out.get("os"):
+            out["os"] = detectar_so()
         if out.get(eixo) not in valores:
             problemas.append(f"{eixo}: {out.get(eixo)!r} não é um de {', '.join(valores)}")
-    if out.get("ferramenta") == "kiro":
-        motor = (out.get("kiro") or {}).get("motor", "v2")
-        if motor not in MOTORES:
-            problemas.append(f"kiro.motor: {motor!r} não é um de {', '.join(MOTORES)}")
-        out["kiro"] = dict(out.get("kiro") or {}, motor=motor)
-    if not isinstance(out.get("modulos"), list):
-        problemas.append("modulos precisa ser uma lista")
+    if "kiro" in tools:
+        engine = (out.get("kiro") or {}).get("engine", "v2")
+        if engine not in ENGINES:
+            problemas.append(f"kiro.engine: {engine!r} não é um de {', '.join(ENGINES)}")
+        out["kiro"] = dict(out.get("kiro") or {}, engine=engine)
+    if not isinstance(out.get("modules"), list):
+        problemas.append("modules precisa ser uma lista")
     else:
-        if len(set(out["modulos"])) != len(out["modulos"]):
-            problemas.append("modulos tem repetição")
-        for m in out["modulos"]:
+        if len(set(out["modules"])) != len(out["modules"]):
+            problemas.append("modules tem repetição")
+        for m in out["modules"]:
             if m not in modulos_existentes:
                 problemas.append(f"módulo {m!r} não existe" + (f" (há: {', '.join(modulos_existentes)})"
                                                                if modulos_existentes else " (ainda não há módulos)"))
     base = (out.get("git") or {}).get("base")
     if not isinstance(base, str) or not base.strip():
         problemas.append("git.base precisa ser o nome da branch de desenvolvimento (ex.: develop)")
-    if not isinstance(out.get("codigo_dir"), str) or not out["codigo_dir"].strip():
-        problemas.append("codigo_dir precisa ser a pasta dos clones (ex.: ~/code)")
+    if not isinstance(out.get("code_dir"), str) or not out["code_dir"].strip():
+        problemas.append("code_dir precisa ser a pasta dos clones (ex.: ~/code)")
     task = out.get("task")
     if not isinstance(task, dict):
         problemas.append("task precisa ser um objeto")
@@ -120,43 +125,50 @@ def validar(cfg, modulos_existentes=()):
         out["task"] = dict(PADRAO["task"], **task)
         if not isinstance(out["task"]["max"], int) or out["task"]["max"] < 1:
             problemas.append("task.max: número de tarefas com ID ao mesmo tempo (1 ou mais)")
-        lancar = out["task"].get("lancar")
-        if lancar is not None and (not isinstance(lancar, list) or not lancar or not all(isinstance(a, str) for a in lancar)):
-            problemas.append('task.lancar: lista de strings, com {nome}, {uuid} e {prompt} (ex.: ["copilot", "-i", "{prompt}"])')
-    vigia = out.get("vigia")
-    if not isinstance(vigia, dict):
-        problemas.append("vigia precisa ser um objeto")
+        launch = out["task"]["launch"]
+        if not _por_ferramenta(launch, lambda v: isinstance(v, list) and v and all(isinstance(a, str) for a in v)):
+            problemas.append('task.launch: {ferramenta: lista de strings}, com {nome}, {uuid} e {prompt} '
+                             '(ex.: {"copilot": ["copilot", "-i", "{prompt}"]})')
+    watch = out.get("watch")
+    if not isinstance(watch, dict):
+        problemas.append("watch precisa ser um objeto")
     else:
-        out["vigia"] = dict(PADRAO["vigia"], **vigia)
-        if not isinstance(out["vigia"]["intervalo"], int) or out["vigia"]["intervalo"] < 60:
-            problemas.append("vigia.intervalo: segundos entre as passadas (60 ou mais)")
-    promover = out.get("promover")
-    if not isinstance(promover, dict):
-        problemas.append("promover precisa ser um objeto")
+        out["watch"] = dict(PADRAO["watch"], **watch)
+        if not isinstance(out["watch"]["interval"], int) or out["watch"]["interval"] < 60:
+            problemas.append("watch.interval: segundos entre as passadas (60 ou mais)")
+    promote = out.get("promote")
+    if not isinstance(promote, dict):
+        problemas.append("promote precisa ser um objeto")
     else:
-        out["promover"] = dict(PADRAO["promover"], **promover)
-        alvos = out["promover"]["alvos"]
-        ligado = isinstance(out.get("modulos"), list) and "promover" in out["modulos"]
+        out["promote"] = dict(PADRAO["promote"], **promote)
+        alvos = out["promote"]["targets"]
+        ligado = isinstance(out.get("modules"), list) and "promote" in out["modules"]
         # o formato vale sempre (vira texto das skills e argumento de git); só "sem a própria base" depende
         # do módulo ligado, porque o padrão ["main"] conflita com quem usa a main como base
         if (not isinstance(alvos, list) or not alvos or not all(isinstance(a, str) and BRANCH.fullmatch(a) for a in alvos)
                 or len(set(alvos)) != len(alvos)):
-            problemas.append('promover.alvos: lista de nomes de branch, em ordem, sem repetir (ex.: ["staging", "main"])')
+            problemas.append('promote.targets: lista de nomes de branch, em ordem, sem repetir (ex.: ["staging", "main"])')
         elif ligado and (out.get("git") or {}).get("base") in alvos:
-            problemas.append("promover.alvos não pode incluir a própria git.base")
-    modelos = out.get("modelos")
-    if not isinstance(modelos, dict) or any(k not in NIVEIS or not isinstance(v, str) for k, v in modelos.items()):
-        problemas.append(f"modelos: um objeto com {', '.join(NIVEIS)} → nome do modelo na ferramenta")
+            problemas.append("promote.targets não pode incluir a própria git.base")
+    if not _por_ferramenta(out.get("models"), lambda v: isinstance(v, dict) and all(
+            k in NIVEIS and isinstance(n, str) for k, n in v.items())):
+        problemas.append(f"models: {{ferramenta: {{{', '.join(NIVEIS)} → nome do modelo na ferramenta}}}}")
     if problemas:
         raise ErroConfig("; ".join(problemas))
     return out
+
+
+def _por_ferramenta(valor, ok):
+    """`models` e `task.launch`: {ferramenta: valor}. Vale qualquer ferramenta conhecida, mesmo fora de
+    `tools`: tirar uma da lista não obriga a apagar o que é dela."""
+    return isinstance(valor, dict) and all(t in TOOLS and ok(v) for t, v in valor.items())
 
 
 def carregar(caminhos, modulos_existentes=()):
     try:
         bruto = json.loads(caminhos.config.read_text(encoding="utf-8"))
     except FileNotFoundError:
-        raise ErroConfig(f"sem config em {caminhos.config}: rode `fluxo init --ferramenta … --forge …`")
+        raise ErroConfig(f"sem config em {caminhos.config}: rode `fluxo init --tool … --forge …`")
     except ValueError as exc:
         raise ErroConfig(f"{caminhos.config} não é JSON válido: {exc}")
     return validar(bruto, modulos_existentes)

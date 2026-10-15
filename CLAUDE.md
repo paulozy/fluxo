@@ -23,15 +23,19 @@ lib/fluxo/ferramentas # claude.py, copilot.py, kiro.py: onde cada coisa mora e e
 nucleo/               # fontes: instrucoes/NN-*.md, agentes/*.md, skills/<n>/SKILL.md
 adaptadores/          # dados: tools e modelos por ferramenta; variáveis por forge
 modulos/<n>/          # modulo.json (descricao, requer), instrucoes/, skills/, agentes/ do módulo:
-                      # task, mensagens, trava, revisor, vigia, painel. O código fica em lib/fluxo/<n>.py
-                      # (arquivos fixos que o install grava: `arquivos_extras`; ex.: plist, hooks)
+                      # task, messages, lock, reviewer, watch, panel, promote. O código fica em lib/fluxo/<n>.py
+                      # (arquivos fixos que o install grava: `arquivos_extras(cfg, Arquivo)`, uma vez
+                      # por máquina, ex.: plist; `arquivos_da_ferramenta(cfg, tool, …)`, ex.: hooks)
 tests/esperado/       # golden: a árvore gerada em cada cenário (inclui Library/ e .config/systemd)
 ```
 
 ## Regras
 
+- **O que se digita é em inglês:** subcomandos, flags, chaves e valores da config e nomes de módulo. O
+  texto das instruções, os nomes das skills e dos agentes (o Copilot e o Kiro já têm `/plan` e `/review`),
+  as mensagens, as variáveis de template e o estado ficam em português.
 - **Nenhum dado de empresa no repo:** ids, cloudId, nomes de pessoas, orgs ou caminhos de home.
-  - O `fluxo varrer` (pre-commit) e o `test_repo_limpo` barram.
+  - O `fluxo scan` (pre-commit) e o `test_repo_limpo` barram.
   - Os termos proibidos ficam só como sha256 em `tests/proibidos.sha256`.
   - Dado de teste que pareça proibido é montado em runtime.
 - **Formato de ferramenta só com fonte oficial,** citada no docstring do renderizador ou no

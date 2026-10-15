@@ -23,7 +23,7 @@ class ErroTemplate(Exception):
 
 
 def condicao(texto, eixos, valores_validos, onde="?"):
-    """`forge:gitlab`, `chat:rascunho|slack`, `modulo:task`, `nao so:mac`."""
+    """`forge:gitlab`, `chat:draft|slack`, `module:task`, `nao os:mac`."""
     texto = texto.strip()
     negar = texto.startswith("nao ")
     if negar:

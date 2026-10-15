@@ -48,7 +48,7 @@ class Task(unittest.TestCase):
         self.home = Path(self.tmp.name).resolve()
         self.cam = escrever_config(self.home, "copilot-tudo")
         self.cfg = config.carregar(self.cam, montar.modulos_existentes(RAIZ))
-        self.adapt = cli._adaptador(RAIZ, self.cfg)
+        self.adapt = cli._adaptador(RAIZ, self.cfg["tools"][0])
         self.tmux = TmuxFalso()
 
     def tearDown(self):
@@ -58,7 +58,9 @@ class Task(unittest.TestCase):
         out, err = io.StringIO(), io.StringIO()
         kw.setdefault("dentro_do_tmux", True)
         pasta = kw.pop("pasta", self.home)
-        code = task.abrir(id_, prompt, nome, cfg or self.cfg, self.adapt, self.cam, pasta, run=self.tmux,
+        cfg = cfg or self.cfg
+        tool = kw.pop("tool", cfg["tools"][0])
+        code = task.abrir(id_, prompt, nome, cfg, tool, self.adapt, self.cam, pasta, run=self.tmux,
                           dormir=lambda s: None, saida=out, erro=err, **kw)
         return code, out.getvalue(), err.getvalue()
 
@@ -104,7 +106,7 @@ class Task(unittest.TestCase):
     def test_erros_de_uso(self):
         for args, trecho in (((None, "/planejar PROJ-1", None), "de uma tarefa"),
                              ((None, None, None), "informe o ID"),
-                             ((None, "x", "vigia"), "inválido"),
+                             ((None, "x", "watch"), "inválido"),
                              (("id com espaço", None, None), "inválido"),
                              (("PROJ-1", None, "nome"), "tire o -n")):
             with self.subTest(args=args), self.assertRaisesRegex(task.ErroUso, trecho):
@@ -143,13 +145,13 @@ class Task(unittest.TestCase):
         self.assertEqual(copilot[:4] + copilot[5:], ["copilot", "-n", "PROJ-1", "--session-id", "-i", "/planejar PROJ-1"])
         self.assertEqual(copilot[4], self.registros()[-1]["sessao"])
         self.assertEqual(len(copilot[4]), 36)
-        kiro = config.validar({"versao": 1, "ferramenta": "kiro", "forge": "github", "so": "wsl", "modulos": ["task"]},
+        kiro = config.validar({"version": 1, "tools": ["kiro"], "forge": "github", "os": "wsl", "modules": ["task"]},
                               montar.modulos_existentes(RAIZ))
-        self.adapt = cli._adaptador(RAIZ, kiro)
+        self.adapt = cli._adaptador(RAIZ, "kiro")
         self.abrir("PROJ-2", cfg=kiro)
         self.assertEqual(self.comando(), ["kiro-cli", "chat", "--", "/planejar PROJ-2"])  # -- : prompt com - não vira flag
         self.assertIsNone(self.registros()[-1]["sessao"])  # o Kiro não aceita id: ele vem pelo hook
-        proprio = dict(self.cfg, task={"max": 2, "lancar": ["minha-ferramenta", "{prompt}"]})
+        proprio = dict(self.cfg, task={"max": 2, "launch": {"copilot": ["minha-ferramenta", "{prompt}"]}})
         self.abrir(prompt="oi", cfg=proprio)
         self.assertEqual(self.comando(), ["minha-ferramenta", "oi"])
 
@@ -171,7 +173,7 @@ class Task(unittest.TestCase):
         self.assertEqual(self.abrir(prompt="/revisar y")[0], 0)
 
     def test_nomes(self):
-        self.assertEqual(task.nome_do_prompt("/vigia agora"), None)  # reservado: vira avulsa
+        self.assertEqual(task.nome_do_prompt("/watch agora"), None)  # reservado: vira avulsa
         self.assertEqual(task.resolver(None, "x", "LOGS")[1], "logs")
         with self.assertRaisesRegex(task.ErroUso, "inválido"):
             task.resolver("PROJ-1\n", None, None)
@@ -206,7 +208,7 @@ class Task(unittest.TestCase):
         out = io.StringIO()
         task.listar(self.cam, run=self.tmux, saida=out)
         self.assertIn("PROJ-1", out.getvalue())
-        self.assertIn("task", out.getvalue())
+        self.assertRegex(out.getvalue(), r"PROJ-1 +task +copilot ")  # a ferramenta de cada sessão
         self.tmux.vivos.clear()
         out = io.StringIO()
         task.listar(self.cam, run=self.tmux, saida=out)
@@ -220,7 +222,45 @@ class Task(unittest.TestCase):
                 mock.patch("fluxo.task.abrir", side_effect=AssertionError("abriu com o módulo desligado")):
             code = cli.main(["task", "--home", str(self.home), "-p", "oi"], RAIZ)
         self.assertEqual(code, 2)
-        self.assertIn("fluxo modulos --ligar task", err.getvalue())
+        self.assertIn("fluxo modules --enable task", err.getvalue())
+
+    def test_duas_ferramentas(self):
+        escrever_config(self.home, "copilot-claude")
+        for argv, esperado in (([], "copilot"), (["--tool", "claude"], "claude"), (["--tool", "copilot"], "copilot")):
+            with self.subTest(argv=argv), mock.patch("fluxo.task.abrir", return_value=0) as abrir:
+                self.assertEqual(cli.main(["task", "--home", str(self.home), "-p", "oi", "--dir", str(self.home), *argv],
+                                          RAIZ), 0)
+                tool, adapt = abrir.call_args[0][4:6]
+                self.assertEqual((tool, adapt["binario"]), (esperado, esperado))
+
+    def test_launch_por_ferramenta_e_registro(self):
+        cfg = dict(self.cfg, tools=["copilot", "claude"], task={"max": 2, "launch": {"claude": ["meu-claude", "{prompt}"]}})
+        self.adapt = cli._adaptador(RAIZ, "claude")
+        self.assertEqual(self.abrir("PROJ-1", cfg=cfg, tool="claude")[0], 0)
+        self.assertEqual(self.comando(), ["meu-claude", "/planejar PROJ-1"])
+        self.assertEqual(self.registros()[-1]["ferramenta"], "claude")
+        self.adapt = cli._adaptador(RAIZ, "copilot")
+        code, _, err = self.abrir("PROJ-1", cfg=cfg, tool="copilot")  # trocar de ferramenta no meio da tarefa
+        self.assertEqual(code, task.OCUPADO)
+        self.assertIn("'PROJ-1' viva (claude)", err)
+        self.abrir("PROJ-2", cfg=cfg, tool="copilot")
+        self.assertEqual(self.comando()[0], "copilot")  # sem launch dele, o do adaptador
+
+    def test_tool_fora_de_tools_e_erro_antes_do_tmux(self):
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err), contextlib.redirect_stdout(io.StringIO()), \
+                mock.patch("fluxo.task.abrir", side_effect=AssertionError("abriu com uma ferramenta não instalada")):
+            code = cli.main(["task", "--home", str(self.home), "-p", "oi", "--tool", "kiro"], RAIZ)
+        self.assertEqual(code, 2)
+        self.assertIn("kiro não está em tools", err.getvalue())
+
+    def test_tool_escolhe_o_adaptador(self):
+        for argv in ([], ["--tool", "copilot"]):
+            with self.subTest(argv=argv), mock.patch("fluxo.task.abrir", return_value=0) as abrir:
+                self.assertEqual(cli.main(["task", "--home", str(self.home), "-p", "oi", "--dir", str(self.home), *argv],
+                                          RAIZ), 0)
+                tool, adapt = abrir.call_args[0][4:6]
+                self.assertEqual((tool, adapt["binario"]), ("copilot", "copilot"))
 
 
 @unittest.skipUnless(shutil.which("tmux"), "sem tmux nesta máquina")
@@ -269,10 +309,10 @@ class TmuxDeVerdade(unittest.TestCase):
             shutil.rmtree(self.tmp, ignore_errors=True)
 
     def test_abre_vive_e_morre(self):
-        cam = escrever_config(self.home, "copilot-tudo", task={"max": 2, "lancar": ["sh", "-c", "sleep 30"]})
+        cam = escrever_config(self.home, "copilot-tudo", task={"max": 2, "launch": {"copilot": ["sh", "-c", "sleep 30"]}})
         cfg = config.carregar(cam, montar.modulos_existentes(RAIZ))
         out, err = io.StringIO(), io.StringIO()
-        code = task.abrir("PROJ-1", None, None, cfg, cli._adaptador(RAIZ, cfg), cam, self.home, alvo="teste:",
+        code = task.abrir("PROJ-1", None, None, cfg, "copilot", cli._adaptador(RAIZ, "copilot"), cam, self.home, alvo="teste:",
                           saida=out, erro=err)
         self.assertEqual(code, 0, err.getvalue())
         reg, = task.ler_tasks(cam.estado)
@@ -282,10 +322,10 @@ class TmuxDeVerdade(unittest.TestCase):
         self.assertEqual(task.vivas(cam.estado, tmux.panes_vivos()), [])
 
     def test_ferramenta_que_nao_existe(self):
-        cam = escrever_config(self.home, "copilot-tudo", task={"max": 2, "lancar": ["ferramenta-que-nao-existe"]})
+        cam = escrever_config(self.home, "copilot-tudo", task={"max": 2, "launch": {"copilot": ["ferramenta-que-nao-existe"]}})
         cfg = config.carregar(cam, montar.modulos_existentes(RAIZ))
         err = io.StringIO()
-        code = task.abrir("PROJ-1", None, None, cfg, cli._adaptador(RAIZ, cfg), cam, self.home, alvo="teste:",
+        code = task.abrir("PROJ-1", None, None, cfg, "copilot", cli._adaptador(RAIZ, "copilot"), cam, self.home, alvo="teste:",
                           saida=io.StringIO(), erro=err)
         self.assertEqual(code, 1, err.getvalue())
 

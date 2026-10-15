@@ -1,5 +1,63 @@
 # Changelog
 
+## [0.5.0] — 2026-10-15
+
+### Mudou (incompatível)
+
+**O que se digita passou para inglês.** O texto das instruções, os nomes das skills e dos agentes, as
+mensagens e o estado continuam em português. Para atualizar, refaça a config com
+`fluxo init … --force` e rode `fluxo install`: a config da 0.4 não é lida.
+
+- **Subcomandos:**
+  - `modulos`, `empacotar` e `varrer` viraram `modules`, `package` e `scan`.
+  - `trava pegar/soltar/status/quebrar/rodar` virou `lock acquire/release/status/break/run`.
+  - `vigia tick/loop/ligar/desligar` virou `watch tick/loop/enable/disable`.
+  - `painel ligar/desligar` virou `panel enable/disable`.
+  - `msg copiar/tom` virou `msg copy/tone`.
+- **Flags:** `--ferramenta`→`--tool`, `--forcar`→`--force`, `--so`→`--os`, `--motor`→`--engine`,
+  `--alvos`→`--promote-to`, `--codigo-dir`→`--code-dir`, `--saida`→`--output`, `--verboso`→`--verbose`,
+  `--ligar/--desligar`→`--enable/--disable`, `--lista`→`--list`, `--nome`→`--name`,
+  `--projeto`→`--project`, `--sessao`→`--session`, `--esperar`→`--wait`, `--intervalo`→`--interval`,
+  `--texto`→`--text`, `--evento`→`--event`. Também `FLUXO_SESSAO`→`FLUXO_SESSION`.
+- **Config:**
+  - `ferramenta` virou `tools`, uma lista.
+  - `versao`, `modulos`, `codigo_dir` e `so` viraram `version`, `modules`, `code_dir` e `os`.
+  - `vigia.intervalo`, `promover.alvos` e `kiro.motor` viraram `watch.interval`, `promote.targets` e
+    `kiro.engine`.
+  - `modelos` virou `models`, por ferramenta, com os níveis `strong/medium/light`.
+  - `task.lancar` virou `task.launch`, também por ferramenta.
+  - Os valores `rascunho` e `nenhum` viraram `draft` e `none`.
+- **Módulos:** `mensagens`, `trava`, `vigia`, `painel`, `revisor` e `promover` viraram `messages`, `lock`,
+  `watch`, `panel`, `reviewer` e `promote`. Com eles mudaram as janelas do tmux, as units
+  `fluxo-watch.*` e o rótulo `dev.fluxo.watch` do launchd.
+
+### Adicionado
+
+- **Várias ferramentas ao mesmo tempo:** `fluxo init --tool copilot --tool claude` instala as duas, e a
+  primeira é a padrão.
+  - `fluxo task <ID> --tool claude` abre na outra. Uma ferramenta fora de `tools` sai com 2, antes de
+    tocar no tmux.
+  - As instruções de cada ferramenta trazem o próprio `--tool`, para que uma sessão que abre outra a abra
+    nela mesma.
+  - Módulo com `requer` entra só nas ferramentas que atendem: o `panel` vale para o Copilot e o Kiro, e
+    não para o Claude.
+  - **O `doctor`** confere o binário de cada uma. A falta da padrão é FALHA, a das outras é AVISO.
+  - **O `task --list`** mostra a ferramenta de cada sessão, e a mensagem de sessão viva com o mesmo nome
+    diz em qual ferramenta ela está.
+  - Tirar uma ferramenta de `tools` e rodar `fluxo install` remove os arquivos dela.
+  - **Aviso no install:** quando ele vai apagar o agente `fluxo` do Kiro que o `panel enable` deixou como
+    padrão, pede para rodar `fluxo panel disable` antes.
+- **Testes de nome:**
+  - os comandos gravados nos hooks, nas units, no plist e no loop do WSL passam pelo parser;
+  - nenhuma fonte ou doc cita a grafia antiga;
+  - cada módulo acha o próprio `lib/fluxo/<n>.py`.
+
+### Corrigido
+
+- **O `fluxo hook` nunca imprime nem falha, mesmo com argumento que o parser recusa.** Antes, uma flag
+  desconhecida imprimia o uso e saía com 2. Entre um `git pull` e o próximo `install`, o hook instalado
+  manda as flags da versão anterior.
+
 ## [0.4.0] — 2026-10-09
 
 ### Adicionado

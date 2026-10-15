@@ -2,7 +2,7 @@
 name: code-reviewer
 description: "Reviews code for quality, security, and best practices. Use proactively after implementing or modifying code."
 tools: [read, search, shell]
-modelo: forte
+model: strong
 ---
 
 You are a senior code reviewer.

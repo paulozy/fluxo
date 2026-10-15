@@ -21,30 +21,33 @@ atexit.register(shutil.rmtree, os.environ["TMUX_TMPDIR"], True)
 from fluxo import config as cfgmod  # noqa: E402
 
 CENARIOS = {
-    "claude": {"ferramenta": "claude", "forge": "github", "so": "linux"},
-    "copilot": {"ferramenta": "copilot", "forge": "gitlab", "so": "mac", "gitlab": {"host": "gitlab.exemplo.com"}},
-    "kiro-v2": {"ferramenta": "kiro", "forge": "github", "so": "wsl", "kiro": {"motor": "v2"}},
-    "kiro-v3": {"ferramenta": "kiro", "forge": "github", "so": "wsl", "kiro": {"motor": "v3"}},
+    "claude": {"tools": ["claude"], "forge": "github", "os": "linux"},
+    "copilot": {"tools": ["copilot"], "forge": "gitlab", "os": "mac", "gitlab": {"host": "gitlab.exemplo.com"}},
+    "kiro-v2": {"tools": ["kiro"], "forge": "github", "os": "wsl", "kiro": {"engine": "v2"}},
+    "kiro-v3": {"tools": ["kiro"], "forge": "github", "os": "wsl", "kiro": {"engine": "v3"}},
     # todos os módulos ligados: cada fase acrescenta os seus
-    "copilot-tudo": {"ferramenta": "copilot", "forge": "gitlab", "so": "mac", "gitlab": {"host": "gitlab.exemplo.com"},
-                     "modulos": ["mensagens", "painel", "promover", "revisor", "task", "trava", "vigia"],
-                     "git": {"base": "develop"}, "promover": {"alvos": ["staging", "main"]}},
-    # tudo o que o Claude aceita (o painel não: lá é o agent-tree), no GitHub
-    "claude-tudo": {"ferramenta": "claude", "forge": "github", "so": "linux",
-                    "modulos": ["mensagens", "promover", "revisor", "task", "trava", "vigia"]},
-    # o promover sem o módulo mensagens: o aviso vira rascunho
-    "claude-promover": {"ferramenta": "claude", "forge": "github", "so": "linux", "modulos": ["promover"]},
-    # o painel no Kiro V2: os hooks embutidos num agente `fluxo`, que vira o padrão
-    "kiro-v2-painel": {"ferramenta": "kiro", "forge": "github", "so": "wsl", "kiro": {"motor": "v2"},
-                       "modulos": ["painel", "vigia"]},
+    "copilot-tudo": {"tools": ["copilot"], "forge": "gitlab", "os": "mac", "gitlab": {"host": "gitlab.exemplo.com"},
+                     "modules": ["messages", "panel", "promote", "reviewer", "task", "lock", "watch"],
+                     "git": {"base": "develop"}, "promote": {"targets": ["staging", "main"]}},
+    # tudo o que o Claude aceita (o panel não: lá é o agent-tree), no GitHub
+    "claude-tudo": {"tools": ["claude"], "forge": "github", "os": "linux",
+                    "modules": ["messages", "promote", "reviewer", "task", "lock", "watch"]},
+    # o promote sem o módulo messages: o aviso vira rascunho
+    "claude-promote": {"tools": ["claude"], "forge": "github", "os": "linux", "modules": ["promote"]},
+    # o panel no Kiro V2: os hooks embutidos num agente `fluxo`, que vira o padrão
+    "kiro-v2-panel": {"tools": ["kiro"], "forge": "github", "os": "wsl", "kiro": {"engine": "v2"},
+                      "modules": ["panel", "watch"]},
+    # duas ferramentas, com o copilot de padrão: o panel só vale para ele, e o watch é da máquina
+    "copilot-claude": {"tools": ["copilot", "claude"], "forge": "github", "os": "linux",
+                       "modules": ["messages", "panel", "promote", "reviewer", "task", "lock", "watch"]},
 }
-PASTAS_FERRAMENTA = (".claude", ".copilot", ".kiro", "Library", ".config/systemd")  # + agendamento do vigia
+PASTAS_FERRAMENTA = (".claude", ".copilot", ".kiro", "Library", ".config/systemd")  # + agendamento do watch
 
 
 def escrever_config(home, cenario, **extra):
     cam = cfgmod.Caminhos(home=home)
     cam.config_dir.mkdir(parents=True, exist_ok=True)
-    dados = dict(CENARIOS[cenario], versao=1, **extra)
+    dados = dict(CENARIOS[cenario], version=1, **extra)
     cam.config.write_text(json.dumps(dados), encoding="utf-8")
     return cam
 

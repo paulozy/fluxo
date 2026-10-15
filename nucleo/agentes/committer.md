@@ -2,7 +2,7 @@
 name: committer
 description: "Creates git commits. Use when the user asks to commit, or when an implementation is complete and the changes need to be committed."
 tools: [read, search, shell]
-modelo: leve
+model: light
 ---
 
 You are a git commit assistant.

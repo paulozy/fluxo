@@ -1,7 +1,7 @@
 """Instala e desinstala o que o `montar` gerou, com um manifesto do que é do fluxo.
 
 Regra central: nunca pisar num arquivo que não é nosso, nem num nosso que o usuário editou. Qualquer
-conflito aborta o install inteiro (nada é gravado) até ele decidir: `--forcar` grava com backup, e o
+conflito aborta o install inteiro (nada é gravado) até ele decidir: `--force` grava com backup, e o
 `uninstall` devolve o backup ao lugar.
 """
 import hashlib
@@ -22,7 +22,7 @@ class Acao:
     rel: str
     arquivo: object = None  # o Arquivo a gravar (CRIAR, ATUALIZAR, IGUAL, ADOTAR, CONFLITO)
     motivo: str = ""
-    backup: str = ""  # nome do .fluxo-bak que o --forcar deixou: o uninstall o devolve
+    backup: str = ""  # nome do .fluxo-bak que o --force deixou: o uninstall o devolve
 
 
 class ConflitoErro(Exception):
@@ -147,7 +147,7 @@ def _remover(home, rel, backup=""):
         caminho.unlink()
     except FileNotFoundError:
         pass
-    if backup:  # o --forcar tinha tirado um arquivo do usuário daqui: ele volta
+    if backup:  # o --force tinha tirado um arquivo do usuário daqui: ele volta
         guardado = caminho.with_name(backup)
         if guardado.exists() or guardado.is_symlink():
             os.replace(guardado, caminho)

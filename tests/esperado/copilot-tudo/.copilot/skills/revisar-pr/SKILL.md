@@ -3,7 +3,7 @@ name: "revisar-pr"
 description: "Revisão lite de uma branch ou PR/MR antes de pedir review ao time: roda o code-reviewer e o verificador (diff contra o plano) isolados, consolida um relatório com veredito (REPROVAR, PRECISA DE HUMANO ou APROVÁVEL) e, na própria branch, corrige e revisa de novo. Use antes de abrir a PR/MR, ou com a URL de uma."
 argument-hint: "<id da tarefa> | <url da PR/MR> | <branch>"
 ---
-<!-- gerado pelo fluxo a partir de modulos/revisor/skills/revisar-pr/SKILL.md: edite a fonte e rode `fluxo install` -->
+<!-- gerado pelo fluxo a partir de modulos/reviewer/skills/revisar-pr/SKILL.md: edite a fonte e rode `fluxo install` -->
 # /revisar-pr
 
 O pedido: o texto que veio junto do comando (se não veio nada, pergunte)

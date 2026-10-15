@@ -82,9 +82,11 @@ Toda feature segue estas fases, em ordem, sem pular nenhuma.
 
 - Para abrir outra sessão sem sair desta (uma tarefa paralela, ou uma sessão dedicada a algo longo),
   use `fluxo task`. Ela nasce numa janela do tmux, em segundo plano:
-  - `fluxo task <ID>` abre a tarefa com `/planejar <ID>`, e ocupa vaga;
-  - `fluxo task -p "<prompt>"` abre uma sessão avulsa, que não ocupa vaga.
-- `fluxo task --lista` mostra as sessões vivas abertas pelo fluxo. Saída 4 é "sem vaga" ou "o nome já
+  - `fluxo task <ID> --tool claude` abre a tarefa com `/planejar <ID>`, e ocupa vaga;
+  - `fluxo task -p "<prompt>" --tool claude` abre uma sessão avulsa, que não ocupa vaga.
+  - O `--tool claude` abre a sessão nesta mesma ferramenta: sem ele, abre na padrão da config,
+    que pode ser a que o usuário deixou de usar.
+- `fluxo task --list` mostra as sessões vivas abertas pelo fluxo. Saída 4 é "sem vaga" ou "o nome já
   tem sessão viva": não force sem perguntar ao usuário.
 
 ## E2E local
@@ -98,12 +100,12 @@ Toda feature segue estas fases, em ordem, sem pular nenhuma.
   `docker compose -p <repo>-<id> up -d`. Se o compose define `name:`, o worktree e o clone principal
   dividiriam o mesmo projeto, e um `down -v` apagaria os volumes do seu ambiente de dev. Confira com
   `docker compose ls` antes de derrubar.
-- **Uma sessão por vez no stack: `fluxo trava`.** As portas e a memória não se dividem.
-  - Antes de subir: `fluxo trava pegar --id <id> --projeto <repo>-<id>`. Saída 0 é sua; saída 4 é
+- **Uma sessão por vez no stack: `fluxo lock`.** As portas e a memória não se dividem.
+  - Antes de subir: `fluxo lock acquire --id <id> --project <repo>-<id>`. Saída 0 é sua; saída 4 é
     de outra sessão. Nesse caso, avise o usuário e espere: não force nem quebre a trava. Saída 2 é
     "não sei quem é esta sessão" (fora do tmux): siga a regra do `docker ps` abaixo e avise o usuário.
-  - Depois do `down`: `fluxo trava soltar`.
-  - `fluxo trava status` mostra quem está com ela.
+  - Depois do `down`: `fluxo lock release`.
+  - `fluxo lock status` mostra quem está com ela.
 - **Uma sessão por vez no stack.** Antes de subir, confira com `docker ps` que nenhuma outra sessão
   sua está com containers de pé: as portas e a memória não se dividem.
 - **Containers só enquanto são usados.** Derrube (`docker compose -p <repo>-<id> down -v`) assim que o

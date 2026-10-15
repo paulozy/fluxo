@@ -25,9 +25,9 @@
     ]
   },
   "modelos": {
-    "forte": "opus",
-    "medio": "sonnet",
-    "leve": "haiku"
+    "strong": "opus",
+    "medium": "sonnet",
+    "light": "haiku"
   },
   "vars": {
     "argumentos": "$ARGUMENTS",

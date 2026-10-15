@@ -1,4 +1,4 @@
-"""`fluxo empacotar`: um zip para levar o fluxo a uma máquina sem git (o WSL bloqueado).
+"""`fluxo package`: um zip para levar o fluxo a uma máquina sem git (o WSL bloqueado).
 
 O zip leva um arquivo VERSAO, porque lá não há `git describe`. Antes, a varredura de dados: um zip
 com dado de empresa não sai.

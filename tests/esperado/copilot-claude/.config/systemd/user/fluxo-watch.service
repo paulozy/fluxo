@@ -1,0 +1,7 @@
+[Unit]
+Description=fluxo watch (avisa das suas PRs/MRs)
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/fluxo watch tick
+TimeoutStartSec=5min

@@ -1,4 +1,0 @@
-{
-  "descricao": "fluxo painel: as sessões da ferramenta ao vivo (hooks + curses), com pulo pelo tmux",
-  "requer": "ferramenta:copilot|kiro"
-}

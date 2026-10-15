@@ -5,14 +5,17 @@ propósito, regenere com `FLUXO_ATUALIZAR_ESPERADO=1 python3 -m unittest discove
 """
 import contextlib
 import io
+import json
 import os
 import shutil
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from base import CENARIOS, RAIZ, arvore, escrever_config
-from fluxo import cli, config, instalar, montar
+from fluxo import cli, config, fonte, instalar, montar, panel
 
 ESPERADO = RAIZ / "tests" / "esperado"
 
@@ -78,11 +81,11 @@ class Install(unittest.TestCase):
         self.assertFalse((self.home / ".claude" / "rules").exists())  # all-or-nothing
         self.assertFalse(config.Caminhos(home=self.home).manifesto.exists())
 
-    def test_forcar_faz_backup(self):
+    def test_force_faz_backup(self):
         alheio = self.home / ".claude" / "agents" / "code-reviewer.md"
         alheio.parent.mkdir(parents=True)
         alheio.write_text("meu\n")
-        self.assertEqual(self.instalar("claude", "--forcar")[0], 0)
+        self.assertEqual(self.instalar("claude", "--force")[0], 0)
         backups = list(alheio.parent.glob("code-reviewer.md.fluxo-bak-*"))
         self.assertEqual([b.read_text() for b in backups], ["meu\n"])
         self.assertIn("senior code reviewer", alheio.read_text())
@@ -107,7 +110,7 @@ class Install(unittest.TestCase):
         self.assertIn(".claude/rules/fluxo.md", instalar.ler_manifesto(cam.manifesto))
 
     def test_o_que_sai_da_config_e_removido(self):
-        self.instalar("kiro-v2", modulos=["mensagens"])
+        self.instalar("kiro-v2", modules=["messages"])
         skill = self.home / ".kiro" / "skills" / "aviso" / "SKILL.md"
         self.assertTrue(skill.exists())
         code, out, _ = self.instalar("kiro-v2")  # módulo desligado
@@ -116,7 +119,7 @@ class Install(unittest.TestCase):
         self.assertFalse(skill.parent.exists())  # a pasta da skill sai junto
 
     def test_removido_mas_editado_fica(self):
-        self.instalar("kiro-v2", modulos=["mensagens"])
+        self.instalar("kiro-v2", modules=["messages"])
         skill = self.home / ".kiro" / "skills" / "aviso" / "SKILL.md"
         skill.write_text("editei\n")
         code, out, _ = self.instalar("kiro-v2")
@@ -126,7 +129,7 @@ class Install(unittest.TestCase):
         cam = config.Caminhos(home=self.home)
         self.assertNotIn(".kiro/skills/aviso/SKILL.md", instalar.ler_manifesto(cam.manifesto))
 
-    def test_troca_de_motor_atualiza_os_agentes(self):
+    def test_troca_de_engine_atualiza_os_agentes(self):
         self.instalar("kiro-v2")
         agente = self.home / ".kiro" / "agents" / "architect.json"
         self.assertIn('"web_search"', agente.read_text())
@@ -190,16 +193,16 @@ class Install(unittest.TestCase):
         code, out, _ = self.instalar()
         self.assertEqual(code, 3)
         self.assertIn("(é um link simbólico)", out)
-        self.assertEqual(self.instalar("claude", "--forcar")[0], 0)
+        self.assertEqual(self.instalar("claude", "--force")[0], 0)
         self.assertEqual(fora.read_text(), "não é do fluxo\n")  # o link foi trocado, não seguido
         self.assertFalse(destino.is_symlink())
         self.assertTrue([b for b in destino.parent.glob("fluxo.md.fluxo-bak-*") if b.is_symlink()])
 
-    def test_forcar_e_uninstall_devolvem_o_original(self):
+    def test_force_e_uninstall_devolvem_o_original(self):
         meu = self.home / ".claude" / "agents" / "code-reviewer.md"
         meu.parent.mkdir(parents=True)
         meu.write_text("meu\n")
-        self.instalar("claude", "--forcar")
+        self.instalar("claude", "--force")
         self.instalar("claude")  # um install depois mantém o registro do backup
         code, out, _ = rodar("uninstall", "--home", str(self.home))
         self.assertEqual(code, 0)
@@ -249,16 +252,125 @@ class Install(unittest.TestCase):
         code, _, err = rodar("install", "--home", str(self.home))
         self.assertEqual(code, 2)
         self.assertIn("fluxo init", err)
-        self.assertEqual(rodar("init", "--home", str(self.home), "--ferramenta", "kiro", "--forge", "github")[0], 0)
-        code, _, err = rodar("init", "--home", str(self.home), "--ferramenta", "kiro", "--forge", "github")
+        self.assertEqual(rodar("init", "--home", str(self.home), "--tool", "kiro", "--forge", "github")[0], 0)
+        code, _, err = rodar("init", "--home", str(self.home), "--tool", "kiro", "--forge", "github")
         self.assertEqual(code, 2)
-        self.assertIn("--forcar", err)
-        rodar("modulos", "--home", str(self.home), "--ligar", "vigia", "revisor")
-        rodar("init", "--home", str(self.home), "--ferramenta", "kiro", "--forge", "github", "--forcar",
-              "--alvos", "staging, main")
+        self.assertIn("--force", err)
+        rodar("modules", "--home", str(self.home), "--enable", "watch", "reviewer")
+        rodar("init", "--home", str(self.home), "--tool", "kiro", "--forge", "github", "--force",
+              "--promote-to", "staging, main")
         cfg = config.carregar(config.Caminhos(home=self.home), montar.modulos_existentes(RAIZ))
-        self.assertEqual(cfg["promover"]["alvos"], ["staging", "main"])
-        self.assertEqual(cfg["modulos"], ["vigia", "revisor"])  # o --forcar não apaga os módulos ligados
+        self.assertEqual(cfg["promote"]["targets"], ["staging", "main"])
+        self.assertEqual(cfg["modules"], ["watch", "reviewer"])  # o --force não apaga os módulos ligados
+
+    def test_duas_ferramentas_e_o_panel_so_onde_cabe(self):
+        self.assertEqual(self.instalar("copilot-claude")[0], 0)
+        self.assertTrue((self.home / ".copilot" / "hooks" / "fluxo.json").exists())
+        self.assertNotIn("hook", " ".join(arvore(self.home, (".claude",))))
+        # a sessão que abre outra a abre na própria ferramenta, e não na padrão
+        self.assertIn("fluxo task <ID> --tool claude", (self.home / ".claude" / "rules" / "fluxo.md").read_text())
+        copilot = (self.home / ".copilot" / "instructions" / "fluxo.instructions.md").read_text()
+        self.assertIn("fluxo task <ID> --tool copilot", copilot)
+
+    def test_tirar_e_por_de_volta_uma_ferramenta(self):
+        self.instalar("copilot-claude")
+        copilot = arvore(self.home, (".copilot", ".config/systemd"))
+        code, out, _ = self.instalar("copilot-claude", tools=["copilot"])
+        self.assertEqual(code, 0)
+        self.assertEqual(arvore(self.home, (".claude",)), {})
+        self.assertEqual(arvore(self.home, (".copilot", ".config/systemd")), copilot)  # a outra e a máquina não mudam
+        code, out, _ = self.instalar("copilot-claude")
+        self.assertEqual(code, 0)
+        self.assertIn("  criar      ~/.claude/rules/fluxo.md", out)
+
+    def test_por_de_volta_com_arquivo_editado_e_conflito(self):
+        """O editado fica quando a ferramenta sai, e sai do manifesto: na volta, ele não é mais do fluxo."""
+        self.instalar("copilot-claude")
+        regra = self.home / ".claude" / "rules" / "fluxo.md"
+        regra.write_text("editei\n")
+        self.assertEqual(self.instalar("copilot-claude", tools=["copilot"])[0], 0)
+        self.assertEqual(regra.read_text(), "editei\n")
+        code, out, err = self.instalar("copilot-claude")
+        self.assertEqual(code, 3)
+        self.assertIn("conflito   ~/.claude/rules/fluxo.md", out)
+        self.assertIn("Nada foi gravado", err)
+        self.assertEqual(sorted(arvore(self.home, (".claude",))), [".claude/rules/fluxo.md"])  # nada foi gravado
+
+    def test_tirar_o_kiro_com_o_agente_padrao_avisa(self):
+        self.instalar("kiro-v2-panel")
+        cam = config.Caminhos(home=self.home)
+        self.assertNotIn("panel disable", self.instalar("kiro-v2-panel", tools=["copilot"])[1])  # sem enable antes
+        self.instalar("kiro-v2-panel")
+        cam.estado.mkdir(parents=True, exist_ok=True)
+        (cam.estado / "painel-agente-anterior.txt").write_text("kiro_default")  # o `panel enable` rodou
+        code, out, _ = self.instalar("kiro-v2-panel", tools=["copilot"])
+        self.assertEqual(code, 0)
+        self.assertIn("aviso: o agente fluxo é o padrão do Kiro (fluxo panel enable): rode fluxo panel disable", out)
+        # o disable devolve o anterior mesmo sem o kiro em tools e sem o módulo
+        escrever_config(self.home, "kiro-v2-panel", tools=["copilot"], modules=[])
+        chamadas = []
+        run = lambda argv, **k: chamadas.append(argv) or subprocess.CompletedProcess(argv, 0, "", "")
+        with mock.patch("fluxo.cli.subprocess.run", run):
+            code, out, err = rodar("panel", "disable", "--home", str(self.home))
+        self.assertEqual((code, chamadas), (0, [["kiro-cli", "agent", "set-default", "kiro_default"]]), err)
+        self.assertFalse((cam.estado / "painel-agente-anterior.txt").exists())
+
+    def test_modulo_de_uma_ferramenta_nao_vaza_para_a_outra(self):
+        """Com o claude primeiro: o requer vale para cada ferramenta, e não só para a padrão."""
+        repo = self.home / "repo"
+        shutil.copytree(RAIZ, repo, ignore=shutil.ignore_patterns(".git", "esperado", "__pycache__"))
+        mod = repo / "modulos" / "so-copilot"
+        for pasta in ("instrucoes", "skills/so-copilot", "agentes"):
+            (mod / pasta).mkdir(parents=True)
+        (mod / "modulo.json").write_text(json.dumps({"descricao": "x", "requer": "tool:copilot"}))
+        (mod / "instrucoes" / "27-so-copilot.md").write_text("## Só no Copilot\n")
+        (mod / "skills" / "so-copilot" / "SKILL.md").write_text("---\nname: so-copilot\ndescription: x\n---\ncorpo\n")
+        (mod / "agentes" / "so-copilot.md").write_text(
+            "---\nname: so-copilot\ndescription: x\ntools: [read]\nmodel: light\n---\ncorpo\n")
+        metodo = repo / "nucleo" / "instrucoes" / "10-metodo.md"
+        metodo.write_text(metodo.read_text() + "\n<!-- se module:so-copilot -->\nMARCA-DO-MODULO\n<!-- fim -->\n")
+        cam = escrever_config(self.home, "claude", tools=["claude", "copilot"], modules=["so-copilot"])
+        arquivos, _ = montar.montar(config.carregar(cam, montar.modulos_existentes(repo)), repo, cam)
+        gerado = {a.rel: a.conteudo.decode() for a in arquivos}
+        copilot, claude = gerado[".copilot/instructions/fluxo.instructions.md"], gerado[".claude/rules/fluxo.md"]
+        for trecho in ("## Só no Copilot", "MARCA-DO-MODULO", "`so-copilot`"):
+            self.assertIn(trecho, copilot)
+            self.assertNotIn(trecho, claude)
+        self.assertIn(".copilot/skills/so-copilot/SKILL.md", gerado)
+        self.assertIn(".copilot/agents/so-copilot.agent.md", gerado)
+        self.assertEqual([r for r in gerado if r.startswith(".claude/") and "so-copilot" in r], [])
+
+    def test_models_por_ferramenta(self):
+        cam = escrever_config(self.home, "copilot-claude", models={"claude": {"strong": "a"}, "copilot": {"strong": "b"}})
+        arquivos, _ = montar.montar(config.carregar(cam, montar.modulos_existentes(RAIZ)), RAIZ, cam)
+        gerado = {a.rel: a.conteudo.decode() for a in arquivos}
+        self.assertEqual(fonte.ler(gerado[".claude/agents/architect.md"])[0]["model"], "a")
+        self.assertEqual(fonte.ler(gerado[".copilot/agents/architect.agent.md"])[0]["model"], "b")
+        self.assertEqual(fonte.ler(gerado[".claude/agents/debugger.md"])[0]["model"], "sonnet")  # sem override: o do adaptador
+        self.assertNotIn("model", fonte.ler(gerado[".copilot/agents/debugger.agent.md"])[0])
+
+    def test_destino_repetido_entre_ferramentas_e_erro(self):
+        """Mesmo com bytes iguais: juntar esconderia um arquivo gerado duas vezes."""
+        cam = escrever_config(self.home, "copilot-claude")
+        cfg = config.carregar(cam, montar.modulos_existentes(RAIZ))
+        mesmo = lambda cfg, tool, Arquivo, **_: ([Arquivo("igual.txt", b"x")], [])
+        with mock.patch.object(panel, "arquivos_da_ferramenta", mesmo), \
+                mock.patch.object(montar, "modulos_da_ferramenta", lambda cfg, tool, raiz: list(cfg["modules"])):
+            with self.assertRaisesRegex(montar.ErroMontagem, "mesmo destino: igual.txt"):
+                montar.montar(cfg, RAIZ, cam)
+
+    def test_init_force_mantem_as_opcoes(self):
+        """O --force refaz os eixos (ferramentas, forge, os…) e mantém o que o usuário ajustou depois."""
+        cam = config.Caminhos(home=self.home)
+        self.assertEqual(rodar("init", "--home", str(self.home), "--tool", "claude", "--forge", "github")[0], 0)
+        opcoes = {"modules": ["task"], "models": {"claude": {"strong": "x"}}, "task": {"max": 3},
+                  "watch": {"interval": 120}, "promote": {"targets": ["staging", "main"]}}
+        cam.config.write_text(json.dumps(dict(json.loads(cam.config.read_text()), **opcoes)))
+        self.assertEqual(rodar("init", "--home", str(self.home), "--tool", "copilot", "--forge", "gitlab",
+                               "--gitlab-host", "g.exemplo.com", "--force")[0], 0)
+        novo = json.loads(cam.config.read_text())
+        self.assertEqual({k: novo[k] for k in opcoes}, opcoes)
+        self.assertEqual((novo["tools"], novo["forge"]), (["copilot"], "gitlab"))
 
     def test_skill_quebrada_vira_erro_curto(self):
         raiz = self.home / "repo"

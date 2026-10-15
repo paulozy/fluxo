@@ -10,7 +10,7 @@ O pedido: {{argumentos}}
 
 Rode depois do code review e do E2E. Siga esta ordem: o plano fecha por último, porque só então
 existem os links.
-<!-- se modulo:revisor -->
+<!-- se module:reviewer -->
 
 **Antes de tudo, a revisão:** siga a skill `/revisar-pr` com o `<id>` da tarefa. Continue só com
 APROVÁVEL, ou com o ok explícito do usuário sobre o relatório. Se a revisão mudou código, o resumo,
@@ -45,7 +45,7 @@ depois do E2E.
    `{{dados_sh}}/tmp/<id>-<repo>.titulo` e `.md` (caminho expandido, fora do worktree), nunca entre
    aspas no shell: crase e `$(…)` digitados entre aspas duplas viram comando. (O `"$(cat arquivo)"`
    acima é seguro: o shell não reexecuta o que o `cat` devolve.)
-<!-- se modulo:mensagens -->
+<!-- se module:messages -->
 4. **Aviso ao time:** siga a skill `/aviso` (tom do usuário, aprovação, cópia para a área de
    transferência), com o link da {{forge.pr}} e uma linha sobre o que muda. **Nada é enviado** por você.
 <!-- senao -->

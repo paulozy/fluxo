@@ -1,0 +1,54 @@
+{
+  "version": 1,
+  "hooks": {
+    "sessionStart": [
+      {
+        "type": "command",
+        "bash": "\"$HOME/.local/bin/fluxo\" hook --tool copilot --event sessionStart",
+        "timeoutSec": 5
+      }
+    ],
+    "userPromptSubmitted": [
+      {
+        "type": "command",
+        "bash": "\"$HOME/.local/bin/fluxo\" hook --tool copilot --event userPromptSubmitted",
+        "timeoutSec": 5
+      }
+    ],
+    "postToolUse": [
+      {
+        "type": "command",
+        "bash": "\"$HOME/.local/bin/fluxo\" hook --tool copilot --event postToolUse",
+        "timeoutSec": 5
+      }
+    ],
+    "notification": [
+      {
+        "type": "command",
+        "bash": "\"$HOME/.local/bin/fluxo\" hook --tool copilot --event notification",
+        "timeoutSec": 5
+      }
+    ],
+    "permissionRequest": [
+      {
+        "type": "command",
+        "bash": "\"$HOME/.local/bin/fluxo\" hook --tool copilot --event permissionRequest",
+        "timeoutSec": 5
+      }
+    ],
+    "agentStop": [
+      {
+        "type": "command",
+        "bash": "\"$HOME/.local/bin/fluxo\" hook --tool copilot --event agentStop",
+        "timeoutSec": 5
+      }
+    ],
+    "sessionEnd": [
+      {
+        "type": "command",
+        "bash": "\"$HOME/.local/bin/fluxo\" hook --tool copilot --event sessionEnd",
+        "timeoutSec": 5
+      }
+    ]
+  }
+}

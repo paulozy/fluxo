@@ -4,7 +4,7 @@
     fluxo task PROJ-12 -p "/implementar PROJ-12"
     fluxo task -p "confere os logs"         # avulsa: não ocupa vaga; nome avulsa, avulsa-b…
     fluxo task -p "/revisar" -n rev         # avulsa com nome (única por nome)
-    fluxo task --lista
+    fluxo task --list
 
 Saídas: 0 abriu (ou só listou); 1 a ferramenta não subiu; 2 uso inválido; 3 nada abriu (sem tmux:
 rode com --target); 4 sem vaga, ou o nome já tem sessão viva.
@@ -23,7 +23,7 @@ from . import tmux
 
 ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$")
 NOME_RE = re.compile(r"^[a-z][a-z0-9-]{1,29}$")
-RESERVADOS = ("vigia", "painel")  # janelas que o próprio fluxo abre
+RESERVADOS = ("watch", "panel")  # janelas que o próprio fluxo abre
 OCUPADO = 4
 SUBIR = 3.0  # segundos até conferir que a ferramenta não caiu ao abrir (o Copilot é Node: demora a falhar)
 
@@ -84,14 +84,14 @@ def argv_ferramenta(modelo, nome, sessao, prompt):
     return [a.replace("{nome}", nome).replace("{uuid}", sessao or "").replace("{prompt}", prompt) for a in modelo]
 
 
-def abrir(id_, prompt, nome, cfg, adapt, cam, pasta, alvo=None, forcar=False, dry_run=False, dentro_do_tmux=False,
+def abrir(id_, prompt, nome, cfg, tool, adapt, cam, pasta, alvo=None, forcar=False, dry_run=False, dentro_do_tmux=False,
           run=subprocess.run, dormir=time.sleep, saida=None, erro=None):
     saida, erro = saida or sys.stdout, erro or sys.stderr
     kind, nome, prompt, sufixar = resolver(id_, prompt, nome)
     pasta = Path(pasta).expanduser().resolve()  # relativa iria assim para o tasks.jsonl
     if not pasta.is_dir():  # o tmux abriria no HOME sem avisar, e o /planejar rodaria lá
-        raise ErroUso(f"a pasta {pasta} não existe (--dir, ou codigo_dir na config)")
-    modelo = cfg["task"].get("lancar") or adapt["lancar"]
+        raise ErroUso(f"a pasta {pasta} não existe (--dir, ou code_dir na config)")
+    modelo = cfg["task"]["launch"].get(tool) or adapt["lancar"]
     cam.estado.mkdir(parents=True, exist_ok=True)
     with open(cam.estado / "task.lock", "w") as trava:  # dois `fluxo task` juntos não passam juntos pela conta
         fcntl.flock(trava, fcntl.LOCK_EX)
@@ -101,7 +101,9 @@ def abrir(id_, prompt, nome, cfg, adapt, cam, pasta, alvo=None, forcar=False, dr
         if sufixar:
             nome = next((n for n in [nome, *(f"{nome}-{c}" for c in "bcdefghijklmnopqrstuvwxyz")] if n not in nomes), nome)
         if nome in nomes:
-            print(f"fluxo task: já há uma sessão {nome!r} viva; vá até ela (painel ou tmux) ou feche-a", file=erro)
+            viva = next(t for t in ativas if t.get("nome") == nome)
+            print(f"fluxo task: já há uma sessão {nome!r} viva ({viva.get('ferramenta') or '?'}); vá até ela "
+                  "(fluxo panel ou tmux), ou feche-a antes de abri-la de novo", file=erro)
             return OCUPADO
         tarefas = [t for t in ativas if t.get("kind") == "task"]
         if kind == "task" and len(tarefas) >= cfg["task"]["max"] and not forcar:
@@ -130,7 +132,7 @@ def abrir(id_, prompt, nome, cfg, adapt, cam, pasta, alvo=None, forcar=False, dr
             print(f"fluxo task: a ferramenta não subiu na janela {janela} (flag errada? pasta sumiu?); "
                   "nada foi registrado. Rode o comando à mão para ver o erro: " + shlex.join(comando), file=erro)
             return 1
-        reg = {"ts": time.time(), "id": id_, "nome": nome, "kind": kind, "ferramenta": cfg["ferramenta"],
+        reg = {"ts": time.time(), "id": id_, "nome": nome, "kind": kind, "ferramenta": tool,
                "sessao": sessao, "dir": str(pasta), "window": janela, "pane": pane, "pane_pid": pane_pid,
                "prompt": prompt}
         with open(cam.estado / "tasks.jsonl", "a", encoding="utf-8") as fh:
@@ -147,6 +149,7 @@ def listar(cam, run=subprocess.run, agora=None, saida=None):
         return 0
     for t in ativas:
         minutos = int((agora - (t.get("ts") or agora)) // 60)
-        print(f"{t.get('nome', '?'):<20} {t.get('kind', '?'):<7} há {minutos:>4} min  pane {t.get('pane')}  "
+        print(f"{t.get('nome', '?'):<20} {t.get('kind', '?'):<7} {t.get('ferramenta') or '?':<8} há {minutos:>4} min  "
+              f"pane {t.get('pane')}  "
               f"{(t.get('prompt') or '')[:50]}", file=saida)
     return 0

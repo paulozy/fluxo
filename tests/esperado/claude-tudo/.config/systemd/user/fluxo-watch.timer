@@ -1,0 +1,10 @@
+[Unit]
+Description=fluxo watch a cada 300 s
+
+[Timer]
+OnActiveSec=1min
+OnUnitActiveSec=300s
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target

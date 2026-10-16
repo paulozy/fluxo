@@ -1,5 +1,6 @@
 """O que cada ferramenta exige do arquivo gerado (pelas docs oficiais) e o que não pode sobrar nele."""
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -229,6 +230,36 @@ class SemDados(unittest.TestCase):
             (raiz / "b.md").write_text("trabalho na outra-empresa\n")
             achados = varredura.varrer(raiz, extra=extra)
             self.assertEqual([(a, n) for a, n, _ in achados], [("a.md", 1), ("b.md", 1)])
+
+    def test_grafias_quebra_de_linha_caminho_e_symlink(self):
+        from fluxo import varredura
+        with tempfile.TemporaryDirectory() as d:
+            raiz = Path(d) / "repo"
+            (raiz / "tests").mkdir(parents=True)
+            (raiz / varredura.LISTA).write_text(varredura._hash("Acme Corp") + "\n")
+            (raiz / "a.md").write_text("ACME_CORP_URL=x\nnovo AcmeCorpClient\nacme\ncorp\nsó acme\n")
+            (raiz / "acme-corp.md").write_text("nada\n")
+            (raiz / "u16.txt").write_bytes(b"\xff\xfe" + "x acme corp\n".encode("utf-16-le"))
+            (raiz / "bin.dat").write_bytes(b"\0acme corp")
+            os.symlink(f"/{'home'}/fulano/x", raiz / "link")
+            achados = sorted((a, n, o) for a, n, o in varredura.varrer(raiz))
+            termo = "termo proibido 'acme corp'"
+            self.assertEqual(achados, [("a.md", 1, termo), ("a.md", 2, termo), ("a.md", 3, termo),
+                                       ("acme-corp.md", 0, termo), ("link", 1, "caminho de home"),
+                                       ("u16.txt", 1, termo)])
+
+    def test_mesma_normalizacao_do_pr_reviewer(self):
+        # os mesmos valores do test/repo-limpo.test.ts do pr-reviewer: as duas varreduras mudam juntas
+        from fluxo import varredura
+        self.assertEqual(varredura.normalizar("Ação-Zeta_2 x²"), "ação zeta_2 x2")
+        self.assertEqual(varredura._hash("Ação-Zeta_2 x²"), "e1a5386876162a0dd1925b27621208a8c4aa8626e4e68605f83133c14937fb1e")
+        self.assertEqual(varredura._hash("ＡＣＭＥ corp"), "ea6f9c07a2f95c788a1645cf557f58aa63c5fa3ad7d749b9db4fce435deef64e")
+        self.assertEqual(varredura.normalizar("Lote٣"), "lote٣")
+        for token, esperado in (("ACME_CORP_URL", ["acme", "corp", "url"]), ("acmeCorpHTTPServer", ["acme", "corp", "http", "server"]),
+                                ("Ver2Final", ["ver2", "final"]), ("abc9", ["abc9"])):
+            self.assertEqual(varredura.partes(token), esperado, token)
+        uuid_colado = "x_" + UUID_FALSO
+        self.assertEqual([o for _, _, o in varredura.varrer_texto("t", uuid_colado, set(), [])], ["UUID"])
 
 
 CHAMADA_COM_BARRA = re.compile(r"(?<![\w./~-])/(" + "|".join(map(re.escape, montar.nomes_de_skills(RAIZ))) + r")(?![\w-])")

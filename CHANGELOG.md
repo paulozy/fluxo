@@ -1,5 +1,16 @@
 # Changelog
 
+## [Não lançado]
+
+### Mudado
+
+- **O `fluxo scan` pega mais grafias:** um termo proibido casa também em `snake_case` e `camelCase`
+  (`FOO_BAR_URL`, `FooBar`), quebrado entre linhas, no nome do arquivo e no alvo de um symlink; o texto é
+  normalizado com NFKC, e o UTF-16 é lido pelo BOM. O UUID colado num identificador e o id de workspace do
+  Slack também são pegos. A tokenização é a mesma da varredura do pr-reviewer, e um teste de paridade
+  confere os dois lados.
+- **A lista de termos proibidos ganhou 9 termos.**
+
 ## [0.7.0] — 2026-10-15
 
 ### Adicionado

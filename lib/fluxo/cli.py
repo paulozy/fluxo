@@ -12,7 +12,7 @@ import sys
 from pathlib import Path
 
 from . import config as cfgmod
-from . import doctor, empacotar, fonte, instalar, lock, messages, montar, panel, render, task, varredura, watch
+from . import doctor, empacotar, fonte, instalar, lock, messages, montar, panel, render, task, varredura, vistas, watch
 
 ERROS_DE_USO = (cfgmod.ErroConfig, montar.ErroMontagem, render.ErroTemplate, fonte.ErroFonte)
 
@@ -170,16 +170,24 @@ def cmd_hook(args, raiz):
 
 
 def cmd_panel(args, raiz):
+    if args.acao and (args.view or args.task or args.follow):
+        print("fluxo panel: --view, --task e --follow são da tela, e não de enable/disable", file=sys.stderr)
+        return 2
+    if args.task and not task.ID_RE.fullmatch(args.task):
+        print(f"fluxo panel: id {args.task!r} inválido", file=sys.stderr)
+        return 2
     # o disable vale com o módulo desligado: é o que devolve o agente padrão do Kiro depois de tirá-lo
     cam, cfg = _carregar(args, raiz, None if args.acao == "disable" else "panel")
     if args.acao in ("enable", "disable"):
         code, msg = (panel.ligar if args.acao == "enable" else panel.desligar)(cfg, cam, run=subprocess.run)
         print(msg, file=sys.stderr if code else sys.stdout)
         return code
+    panel.podar(cam.estado)  # só o panel apaga eventos velhos: o hook nunca apaga nada
+    tela = {"aba": args.view or "list", "tarefa": args.task, "seguida": args.follow, "fixada": bool(args.follow)}
     if args.text or not sys.stdout.isatty():
-        print("\n".join(panel.linhas_texto(panel.ver(cam))))
+        print(panel.texto(cam, cfg["modules"], tela))
         return 0
-    return panel.tela(cam, run=subprocess.run)
+    return panel.tela(cam, run=subprocess.run, ligados=cfg["modules"], inicial=tela)
 
 
 def cmd_init(args, raiz):
@@ -381,6 +389,10 @@ def parser():
     p = sub.add_parser("panel", help="as sessões ao vivo (módulo panel); enable/disable no Kiro V2")
     p.add_argument("acao", nargs="?", choices=("enable", "disable"))
     p.add_argument("--text", action="store_true", help="imprime uma vez, sem a tela interativa")
+    p.add_argument("--view", choices=[chave for chave, _ in vistas.ABAS],
+                   help="a aba: session (a sessão seguida), task, global ou list (padrão)")
+    p.add_argument("--task", help="a tarefa da aba task (padrão: a da sessão seguida, ou o plano mais novo)")
+    p.add_argument("--follow", metavar="SESSION", help="o começo do id da sessão a seguir na aba session")
     p.set_defaults(fn=cmd_panel)
 
     p = sub.add_parser("scan", help="procura dado de empresa no repo (o pre-commit roda)")

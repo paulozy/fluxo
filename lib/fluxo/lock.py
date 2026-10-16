@@ -25,6 +25,7 @@ import sys
 import time
 from contextlib import contextmanager
 
+from . import config as cfgmod
 from . import tmux
 
 OCUPADA = 4
@@ -144,7 +145,8 @@ class Trava:
 
     @contextmanager
     def _travado(self):
-        self.pasta.mkdir(parents=True, exist_ok=True)
+        cfgmod.criar_estado(self.pasta.parent)
+        self.pasta.mkdir(exist_ok=True)
         with open(self.pasta / "trava.lock", "w") as fh:
             fcntl.flock(fh, fcntl.LOCK_EX)
             yield

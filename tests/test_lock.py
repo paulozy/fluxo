@@ -198,6 +198,12 @@ class Trava(unittest.TestCase):
         outra.join(5)
         self.assertTrue(resultado[0][0])
 
+    def test_estado_nasce_so_do_usuario(self):
+        with tempfile.TemporaryDirectory() as d:
+            estado = Path(d) / "estado"
+            lock.Trava(estado).pegar("s1", pid=os.getpid())
+            self.assertEqual(estado.stat().st_mode & 0o777, 0o700)
+
     def test_quem(self):
         self.assertEqual(lock.quem(env={}, pane="%3", pane_pid="77"), "pane-%3-77")
         self.assertEqual(lock.quem(env={"CLAUDE_CODE_SESSION_ID": "abc"}, pane="%3", pane_pid="77"), "abc")

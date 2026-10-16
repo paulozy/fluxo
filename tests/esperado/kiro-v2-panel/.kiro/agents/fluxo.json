@@ -19,23 +19,23 @@
   "hooks": {
     "agentSpawn": [
       {
-        "command": "\"$HOME/.local/bin/fluxo\" hook --tool kiro --event agentSpawn"
+        "command": "\"$HOME/.local/bin/fluxo\" hook --tool kiro --event agentSpawn || true"
       }
     ],
     "userPromptSubmit": [
       {
-        "command": "\"$HOME/.local/bin/fluxo\" hook --tool kiro --event userPromptSubmit"
+        "command": "\"$HOME/.local/bin/fluxo\" hook --tool kiro --event userPromptSubmit || true"
       }
     ],
     "postToolUse": [
       {
-        "command": "\"$HOME/.local/bin/fluxo\" hook --tool kiro --event postToolUse",
+        "command": "\"$HOME/.local/bin/fluxo\" hook --tool kiro --event postToolUse || true",
         "matcher": "*"
       }
     ],
     "stop": [
       {
-        "command": "\"$HOME/.local/bin/fluxo\" hook --tool kiro --event stop"
+        "command": "\"$HOME/.local/bin/fluxo\" hook --tool kiro --event stop || true"
       }
     ]
   }

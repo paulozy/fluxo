@@ -1,5 +1,35 @@
 # Changelog
 
+## [0.7.0] — 2026-10-15
+
+### Adicionado
+
+- **O `fluxo panel` em 4 abas,** como o agent-tree do Claude, mas com as etapas do próprio fluxo:
+  - **sessão:** a seguida, com o último prompt, as ferramentas mais usadas, os subagentes e o log;
+  - **tarefa:** o plano e o checklist do fluxo, as sessões da tarefa, os vereditos do `/revisar-pr` e as
+    PRs/MRs que citam o id;
+  - **global:** os alertas, a trava, o watch e as revisões das últimas 24 h;
+  - **sessões:** a lista de hoje, com o estado colorido.
+  - **Teclas:** `1`–`4`, `↑↓`, `Enter`, `f`, `Tab`, `←→`, `PgUp`/`PgDn`, `h` e `q`.
+  - `fluxo panel --text --view session|task|global|list`, com `--task` e `--follow`.
+  - Só stdlib (`curses`): cores quando o terminal tem, ASCII fora de UTF-8 e largura contada em colunas.
+- **Eventos novos nos hooks:** o começo do prompt, o subagente (início, fim e, no Codex, as ferramentas de
+  dentro dele) e a ferramenta que falhou (`postToolUseFailure` do Copilot).
+- **O panel lê os eventos aos pedaços** (só o que entrou), e o resto a cada 5 s, só o que mudou.
+- **O panel apaga os eventos com mais de 7 dias.** O `estado/` nasce 700.
+- **O aviso de CI do watch grava o estado** (`ci: FAILURE|SUCCESS`), e não só o texto.
+
+### Corrigido
+
+- **Copilot:** "pergunta" vinha do `permissionRequest`, que dispara antes das regras que liberam sozinhas.
+  Agora vem da `notification` com `permission_prompt` ou `elicitation_dialog`. O `permissionRequest` saiu dos
+  hooks, e o de um hook antigo é ignorado.
+- **Kiro V3:** um Stop que sai com 1 faz o Kiro começar outro turno. Os comandos do Kiro terminam em
+  `|| true`.
+- **Notificação e evento que o painel não guarda** não viram mais "erro de hook".
+- **Uma sessão nova num pane reaproveitado não herda mais a tarefa de outra:** a tarefa vem pelo par pane +
+  pane_pid.
+
 ## [0.6.0] — 2026-10-15
 
 ### Adicionado

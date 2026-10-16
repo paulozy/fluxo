@@ -329,6 +329,8 @@ class Revisao(unittest.TestCase):
         run.saida = resposta_gh(pr_gh(ci="FAILURE"))
         self.tick(run, T0 + 60)
         self.assertEqual(len(self.avisos), 1)
+        (ci,) = [a for a in watch.ler_avisos(self.cam.estado) if a.get("tipo") == "ci"]
+        self.assertEqual(ci["ci"], "FAILURE")  # o estado vai junto, e não só o texto (o alerta do panel usa)
         for dia in range(1, 70, 5):  # a mesma PR com o mesmo CI, todo dia, por mais de dois meses
             self.tick(run, T0 + dia * 86400)
         self.assertEqual(len(self.avisos), 1)

@@ -40,6 +40,9 @@ def _textos(valor):
             yield from _textos(v)
 
 
+OU_VERDADEIRO = re.compile(r"\s+\|\|\s+true$")  # os hooks do Kiro: o comando nunca sai com 1
+
+
 def chamadas(rel, conteudo):
     """Os argv de `fluxo …` dentro de um arquivo gerado (hooks em JSON, plist, unit do systemd)."""
     if rel.endswith(".json"):
@@ -48,7 +51,15 @@ def chamadas(rel, conteudo):
         textos = list(_textos(plistlib.loads(conteudo)))
     else:
         textos = conteudo.decode().splitlines()
-    return [shlex.split(m.group(1)) for t in textos for m in [CHAMADA.search(t)] if m]
+    out = []
+    for t in textos:
+        m = CHAMADA.search(t)
+        if m:
+            comando = m.group(1)
+            if rel.startswith(".kiro/") and not OU_VERDADEIRO.search(comando):
+                raise AssertionError(f"{rel}: o comando do Kiro tem de terminar em `|| true`: {comando}")
+            out.append(shlex.split(OU_VERDADEIRO.sub("", comando)))
+    return out
 
 
 def gerado(cenario, **extra):

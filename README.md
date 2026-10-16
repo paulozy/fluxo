@@ -68,7 +68,7 @@ e lembra de rodar `fluxo install`.
 | `messages` | skill `/aviso`: redige no seu tom (`~/.config/fluxo/tom.md`, criado por `fluxo msg tone`), pede aprovação e copia para a área de transferência (`fluxo msg copy`). Nada é enviado. | pbcopy, clip.exe, wl-copy, xclip ou xsel |
 | `lock` | `fluxo lock acquire/release/status/break/run`: uma sessão por vez no stack local. O E2E das instruções passa a usar. | tmux (para saber se o dono vive) |
 | `watch` | `fluxo watch tick` lê as suas PRs (GitHub) ou MRs (GitLab) e avisa na área de trabalho: review ou comentário novo, aprovação no commit atual, CI que quebrou ou passou, merge. Só avisa. `fluxo watch enable` agenda: launchd no Mac, systemd no Linux, uma janela do tmux no WSL. `fluxo watch` mostra o status. | `gh` ou `glab` logado |
-| `panel` | `fluxo panel`: as sessões da ferramenta ao vivo (trabalhando, sua vez, pergunta, parada), com Enter levando até a sessão no tmux. Os hooks vão para `~/.copilot/hooks`, `~/.kiro/hooks` ou `~/.codex/hooks.json` (no Codex, aprovados em `/hooks`); no Kiro V2, um agente `fluxo` vira o padrão (`fluxo panel enable`). Copilot, Kiro e Codex: no Claude o painel é o agent-tree. | tmux |
+| `panel` | `fluxo panel`: as sessões ao vivo em 4 abas (sessão, tarefa, global, sessões; veja [Painel](#painel)), com Enter levando até a sessão no tmux. Os hooks vão para `~/.copilot/hooks`, `~/.kiro/hooks` ou `~/.codex/hooks.json` (no Codex, aprovados em `/hooks`); no Kiro V2, um agente `fluxo` vira o padrão (`fluxo panel enable`). Copilot, Kiro e Codex: no Claude o painel é o agent-tree. | tmux |
 | `promote` | skill `/promover <id>`: depois do QA, leva os commits que entraram na base para as bases seguintes (`promote.targets`, ex.: staging e main), por cherry-pick, com uma PR/MR por base. Mostra tudo antes de publicar; o merge é sempre seu ou do time. | — |
 | `reviewer` | skill `/revisar-pr` e o agente `verificador`: duas revisões isoladas (`code-reviewer` + diff contra o plano), relatório com veredito (REPROVAR, PRECISA DE HUMANO, APROVÁVEL) em `~/.local/share/fluxo/revisoes/`. O `/concluir` roda antes de abrir a PR/MR. | — |
 
@@ -100,6 +100,41 @@ fluxo install
 - **Conflito numa ferramenta para o install inteiro.** Se a pasta de uma delas já tiver um arquivo com o
   nome de um do fluxo (um agente seu, por exemplo), nada é gravado, nem para a outra. Renomeie o seu, ou
   use `--force`, que guarda um backup.
+
+## Painel
+
+`fluxo panel` (módulo `panel`) abre uma tela com 4 abas. `fluxo panel --text --view session|task|global|list`
+imprime uma delas uma vez.
+
+| Aba | O que mostra |
+|---|---|
+| `1` sessão | a sessão seguida: estado, pasta, tarefa, o último prompt, as ferramentas mais usadas, os subagentes e o log |
+| `2` tarefa | o plano (`planos/<id>.md`): status, o checklist do fluxo em barra, as sessões da tarefa, os vereditos do `/revisar-pr` e as PRs/MRs cujo título cita o id |
+| `3` global | as sessões por estado, os alertas (sessão esperando você, erro de hook, trava presa, CI quebrado, erro do watch), a trava, o feed do watch e as revisões das últimas 24 h |
+| `4` sessões | uma linha por sessão viva, com quem espera você em cima (a aba inicial) |
+
+**Teclas:**
+- `1`–`4` trocam a aba, e `↑↓` (ou `j`/`k`) escolhem a sessão.
+- `Enter` vai até ela no tmux.
+- `f` segue a escolhida, e `Tab` passa para a próxima.
+- `←→` trocam a tarefa.
+- `PgUp`/`PgDn` rolam.
+- `h` esconde, e `q` sai.
+
+Sem nada fixado, a aba 1 segue a sessão mais recente, mas só troca quando a seguida para. `--follow <id>` e
+`--task <ID>` fixam.
+
+**O que cada ferramenta entrega na árvore de subagentes:**
+- **Codex:** completa, com as ferramentas de cada subagente.
+- **Copilot:** o início e o fim de cada subagente, mas as ferramentas ficam na conta da sessão, porque o hook
+  não diz de qual subagente são.
+- **Kiro:** o subagente aparece como a chamada da ferramenta `subagent`.
+- **Claude:** fica de fora, porque lá o painel é o agent-tree.
+
+**O que fica no disco:**
+- **Os eventos** (o começo do prompt e de cada comando) ficam em `~/.local/share/fluxo/estado/`, numa pasta
+  só sua (700), e os arquivos de eventos são 600.
+- **A poda:** o `fluxo panel` apaga os eventos com mais de 7 dias. O hook nunca apaga nada.
 
 ## Codex
 

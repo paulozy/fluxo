@@ -19,6 +19,7 @@ import time
 import uuid
 from pathlib import Path
 
+from . import config as cfgmod
 from . import tmux
 
 ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$")
@@ -34,8 +35,8 @@ class ErroUso(Exception):
 
 def ler_tasks(estado):
     try:
-        linhas = (estado / "tasks.jsonl").read_text(encoding="utf-8").splitlines()
-    except FileNotFoundError:
+        linhas = (estado / "tasks.jsonl").read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
         return []
     out = []
     for linha in linhas:
@@ -108,7 +109,7 @@ def abrir(id_, prompt, nome, cfg, tool, adapt, cam, pasta, alvo=None, forcar=Fal
     if not pasta.is_dir():  # o tmux abriria no HOME sem avisar, e o planejar rodaria lá
         raise ErroUso(f"a pasta {pasta} não existe (--dir, ou code_dir na config)")
     modelo = cfg["task"]["launch"].get(tool) or adapt["lancar"]
-    cam.estado.mkdir(parents=True, exist_ok=True)
+    cfgmod.criar_estado(cam.estado)
     with open(cam.estado / "task.lock", "w") as trava:  # dois `fluxo task` juntos não passam juntos pela conta
         fcntl.flock(trava, fcntl.LOCK_EX)
         vivos = tmux.panes_vivos(run)

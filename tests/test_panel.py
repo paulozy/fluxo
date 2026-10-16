@@ -9,7 +9,7 @@ import unittest
 from pathlib import Path
 
 from base import RAIZ, escrever_config
-from fluxo import config, montar, panel
+from fluxo import config, montar, panel, vistas
 
 T0 = 1_791_000_000
 
@@ -24,12 +24,55 @@ class Normalizar(unittest.TestCase):
     def test_copilot_e_kiro(self):
         e = panel.normalizar("copilot", "postToolUse", COPILOT_POST, env={"TMUX_PANE": "%4"}, agora=T0)
         self.assertEqual((e["sessao"], e["evento"], e["tool"], e["alvo"], e["pane"]),
-                         ("cop-1", "ferramenta", "bash", "npm test", "%4"))
+                         ("cop-1", "ferramenta", "bash", "npm test mais", "%4"))  # as linhas viram uma
         k = panel.normalizar("kiro", None, KIRO_POST, env={}, agora=T0)  # o nome do evento vem no payload
         self.assertEqual((k["sessao"], k["evento"], k["tool"], k["alvo"], k["pane"]),
                          ("kiro-1", "ferramenta", "fs_write", "src/app.ts", ""))
         self.assertEqual(panel.normalizar("kiro", "stop", {"session_id": "x"}, env={})["evento"], "fim_turno")
-        self.assertEqual(panel.normalizar("copilot", "permissionRequest", {"sessionId": "x"}, env={})["evento"], "espera")
+        # o permissionRequest dispara antes das regras que liberam sozinhas: não é pergunta, e não é ouvido
+        self.assertIsNone(panel.normalizar("copilot", "permissionRequest", {"sessionId": "x"}, env={}))
+
+    def test_notificacao_do_copilot_pelo_tipo(self):
+        for tipo, esperado in (("permission_prompt", "espera"), ("elicitation_dialog", "espera"),
+                               ("agent_idle", "fim_turno"), ("agent_completed", "fim_turno"),
+                               ("outra_coisa", None), (None, None)):
+            with self.subTest(tipo=tipo):
+                e = panel.normalizar("copilot", "notification", {"sessionId": "x", "notification_type": tipo}, env={})
+                self.assertEqual(e and e["evento"], esperado)
+        camel = panel.normalizar("copilot", "notification", {"sessionId": "x", "notificationType": "permission_prompt"}, env={})
+        self.assertEqual(camel["evento"], "espera")
+
+    def test_campos_novos(self):
+        longo = "faça\n  isto " + "x" * 300
+        turno = panel.normalizar("copilot", "userPromptSubmitted", {"sessionId": "x", "prompt": longo}, env={})
+        self.assertEqual(turno["prompt"], ("faça isto " + "x" * 300)[:160])
+        self.assertNotIn("prompt", panel.normalizar("copilot", "postToolUse", {"sessionId": "x", "prompt": "não"}, env={}))
+        inicio = panel.normalizar("copilot", "sessionStart", {"sessionId": "x", "initialPrompt": "/planejar X"}, env={})
+        self.assertEqual(inicio["prompt"], "/planejar X")
+        falha = panel.normalizar("copilot", "postToolUseFailure", {"sessionId": "x", "toolName": "bash", "error": "1"}, env={})
+        self.assertEqual((falha["evento"], falha["falhou"]), ("ferramenta", True))
+        self.assertNotIn("falhou", panel.normalizar("copilot", "postToolUse", {"sessionId": "x"}, env={}))
+        sub = panel.normalizar("copilot", "subagentStart", {"sessionId": "x", "agentName": "researcher",
+                                                            "agentDisplayName": "Researcher"}, env={})
+        self.assertEqual((sub["evento"], sub["agente"], sub["agente_tipo"]), ("subagente_inicio", "researcher", "Researcher"))
+        # no Copilot, a ferramenta de dentro do subagente não diz de quem é
+        self.assertNotIn("agente", panel.normalizar("copilot", "postToolUse", {"sessionId": "x", "agentName": "r"}, env={}))
+        cx = panel.normalizar("codex", "PostToolUse", {"session_id": "x", "agent_id": "a1", "agent_type": "explorer",
+                                                       "tool_name": "Bash"}, env={})
+        self.assertEqual((cx["agente"], cx["agente_tipo"]), ("a1", "explorer"))
+        self.assertEqual(panel.normalizar("codex", "SubagentStop", {"session_id": "x", "agent_id": "a1"}, env={})["evento"],
+                         "subagente_fim")
+
+    def test_o_que_nao_e_guardado_nao_vira_erro(self):
+        with tempfile.TemporaryDirectory() as d:
+            estado = Path(d) / "estado"
+            for ferramenta, evento, payload in (("copilot", "notification", {"sessionId": "s", "notification_type": "x"}),
+                                                ("copilot", "permissionRequest", {"sessionId": "s"}),  # hook antigo
+                                                ("kiro", "EventoQueNaoExiste", {"session_id": "s"})):
+                with self.subTest(evento=evento):
+                    self.assertEqual(panel.hook(estado, ferramenta, evento, stdin=io.StringIO(json.dumps(payload)), env={}), 0)
+            self.assertEqual(list(estado.glob("eventos-*.jsonl")), [])
+            self.assertFalse((estado / "hook-erros.log").exists())
 
 
 class Revisao(unittest.TestCase):
@@ -58,7 +101,18 @@ class Revisao(unittest.TestCase):
             for dias, sessao in ((0, "hoje"), (1, "ontem"), (8, "velha")):
                 nome = time.strftime("eventos-%Y%m%d.jsonl", time.localtime(T0 - dias * 86400))
                 (estado / nome).write_text(json.dumps({"sessao": sessao, "ts": T0, "evento": "inicio"}) + "\n")
-            self.assertEqual(sorted(e["sessao"] for e in panel.ler_eventos(estado, agora=T0)), ["hoje", "ontem"])
+            self.assertEqual(sorted(e["sessao"] for e in panel.LeitorEventos(estado).ler(T0)), ["hoje", "ontem"])
+
+    def test_poda_de_sete_dias(self):
+        with tempfile.TemporaryDirectory() as d:
+            estado = Path(d)
+            for dias in (0, 6, 7, 8, 30):
+                (estado / time.strftime("eventos-%Y%m%d.jsonl", time.localtime(T0 - dias * 86400))).write_text("{}\n")
+            (estado / "eventos-outra-coisa.jsonl").write_text("{}\n")
+            panel.podar(estado, agora=T0)
+            sobra = sorted(p.name for p in estado.glob("eventos-*.jsonl"))
+            self.assertEqual(sobra, sorted([time.strftime("eventos-%Y%m%d.jsonl", time.localtime(T0 - dias * 86400))
+                                            for dias in (0, 6, 7)] + ["eventos-outra-coisa.jsonl"]))
 
     def test_nova_e_sua_vez_e_pane_morto_acabou(self):
         evs = [{"sessao": "nova", "evento": "inicio", "ts": T0, "pane": "%1"},
@@ -118,6 +172,56 @@ class Sessoes(unittest.TestCase):
         return dict({"sessao": sessao, "evento": evento, "ts": ts, "ferramenta": "copilot", "tool": "", "alvo": "",
                      "cwd": "/repo/api", "pane": ""}, **kw)
 
+    def test_subagentes_de_cada_ferramenta(self):
+        codex = [self.ev("cx", "turno", T0, prompt="mapeie o login", ferramenta="codex"),
+                 self.ev("cx", "subagente_inicio", T0 + 1, agente="a1", agente_tipo="explorer"),
+                 self.ev("cx", "ferramenta", T0 + 2, tool="Bash", agente="a1", agente_tipo="explorer"),
+                 self.ev("cx", "ferramenta", T0 + 3, tool="Bash", agente="a1", agente_tipo="explorer"),
+                 self.ev("cx", "subagente_fim", T0 + 4, agente="a1", agente_tipo="explorer"),
+                 self.ev("cx", "ferramenta", T0 + 5, tool="apply_patch")]
+        (x,) = panel.sessoes(codex, agora=T0 + 6)
+        self.assertEqual(x["ultimo_prompt"], "mapeie o login")
+        self.assertEqual(dict(x["contagem"]), {"apply_patch": 1})  # as do subagente são dele
+        sub = x["subagentes"]["a1"]
+        self.assertEqual((sub["rotulo"], sub["fim"], dict(sub["contagem"])), ("explorer", T0 + 4, {"Bash": 2}))
+        copilot = [self.ev("cp", "subagente_inicio", T0, agente="researcher", agente_tipo="Researcher"),
+                   self.ev("cp", "ferramenta", T0 + 1, tool="bash")]
+        (y,) = panel.sessoes(copilot, agora=T0 + 2)
+        self.assertEqual((y["subagentes"]["researcher"]["fim"], dict(y["contagem"])), (None, {"bash": 1}))
+        kiro = [self.ev("k", "ferramenta", T0, tool="subagent", alvo="researcher", ferramenta="kiro")]
+        (z,) = panel.sessoes(kiro, agora=T0 + 1)
+        (sub,) = z["subagentes"].values()
+        self.assertEqual((sub["rotulo"], sub["fim"]), ("researcher", T0))
+
+    def test_subagente_depois_do_stop_nao_volta_a_trabalhar(self):
+        evs = [self.ev("s", "ferramenta", T0, tool="bash"), self.ev("s", "fim_turno", T0 + 1),
+               self.ev("s", "subagente_fim", T0 + 2, agente="a1"), self.ev("s", "ferramenta", T0 + 3, agente="a1")]
+        (x,) = panel.sessoes(evs, agora=T0 + 4)
+        self.assertEqual(x["estado"], "sua vez")
+
+    def test_log_guarda_os_ultimos(self):
+        evs = [self.ev("s", "ferramenta", T0 + i, tool=f"t{i}") for i in range(panel.LOG + 1)]
+        (x,) = panel.sessoes(evs, agora=T0 + 100)
+        self.assertEqual(len(x["log"]), panel.LOG)
+        self.assertEqual(x["log"][0]["tool"], "t1")
+
+    def test_pane_reaproveitado_nao_herda_a_tarefa(self):
+        with tempfile.TemporaryDirectory() as d:
+            cam = config.Caminhos(home=d)
+            cam.estado.mkdir(parents=True)
+            (cam.estado / "tasks.jsonl").write_text(json.dumps({"nome": "PROJ-1", "id": "PROJ-1", "pane": "%3",
+                                                                 "pane_pid": 111, "kind": "task"}) + "\n")
+            agora = time.time()
+            panel.gravar_evento(cam.estado, self.ev("nova", "inicio", agora, pane="%3", cwd="/repo/web"))
+            for pid, nome in (("999", "web"), ("111", "PROJ-1")):  # outro processo no %3, ou o da tarefa
+                with self.subTest(pid=pid):
+                    (x,) = panel.Coletor(cam).coletar(agora, vivos={("%3", pid)})["sessoes"]
+                    self.assertEqual(x["nome"], nome)
+                    self.assertEqual(bool(x["tarefa"]), nome == "PROJ-1")
+            # sem tmux, nenhum pane conta como morto (senão tudo seria "acabou")
+            (x,) = panel.Coletor(cam).coletar(agora, vivos=set())["sessoes"]
+            self.assertEqual(x["estado"], "sua vez")
+
     def test_estados_e_ordem(self):
         evs = [self.ev("a", "inicio", T0), self.ev("a", "ferramenta", T0 + 5, tool="bash", alvo="npm test", pane="%1"),
                self.ev("b", "inicio", T0), self.ev("b", "espera", T0 + 10),
@@ -133,9 +237,27 @@ class Sessoes(unittest.TestCase):
 
     def test_texto_cabe_em_100_colunas(self):
         evs = [self.ev(f"s{i}", "ferramenta", T0, tool="bash", alvo="x" * 300, cwd="/" + "y" * 80) for i in range(30)]
-        linhas = panel.linhas_texto(panel.sessoes(evs, agora=T0 + 5), largura=100)
-        self.assertTrue(all(len(l) <= 100 for l in linhas))
-        self.assertIn("nenhuma sessão", panel.linhas_texto([])[0])
+        dados = {"agora": T0 + 5, "sessoes": panel.sessoes(evs, agora=T0 + 5)}
+        linhas = vistas.como_texto(vistas.vista_sessoes(dados, {}, 100, 40)).splitlines()
+        self.assertTrue(all(vistas.colunas(l) <= 100 for l in linhas))
+
+    def test_subagente_do_copilot_e_instancia(self):
+        """O Copilot dá o nome do tipo, e não um id: o mesmo nome de novo é outra rodada."""
+        evs = [self.ev("s", "subagente_inicio", T0, agente="explore"), self.ev("s", "subagente_fim", T0 + 1, agente="explore"),
+               self.ev("s", "subagente_inicio", T0 + 2, agente="explore"),  # de novo: está rodando
+               self.ev("s", "subagente_inicio", T0 + 3, agente="explore"),  # e outro em paralelo
+               self.ev("s", "subagente_fim", T0 + 4, agente="explore")]     # fecha o mais velho aberto
+        (x,) = panel.sessoes(evs, agora=T0 + 5)
+        fins = sorted(((v["inicio"], v["fim"]) for v in x["subagentes"].values()), key=lambda t: t[0])
+        self.assertEqual(fins, [(T0, T0 + 1), (T0 + 2, T0 + 4), (T0 + 3, None)])
+
+    def test_payload_com_campo_que_nao_e_texto(self):
+        """Um sessionId que chega como objeto não pode virar chave do painel (quebraria por dois dias)."""
+        e = panel.normalizar("copilot", "postToolUse", {"sessionId": {"x": 1}, "toolName": ["bash"], "cwd": 3}, env={"TMUX_PANE": "%1"})
+        self.assertEqual((e["sessao"], e["tool"], e["cwd"]), ("pane-%1", "", "3"))
+        k = panel.normalizar("kiro", "PostToolUse", {"session_id": "k", "tool_name": "subagent",
+                                                     "tool_input": {"command": "x", "name": "researcher"}}, env={})
+        self.assertEqual(k["alvo"], "researcher")  # o nome, e não um command do subagente
 
 
 class Instalacao(unittest.TestCase):
@@ -149,7 +271,9 @@ class Instalacao(unittest.TestCase):
         gerado, _ = self.gerar("codex")
         hooks = json.loads(gerado[".codex/hooks.json"])["hooks"]
         # sem PermissionRequest: a doc não diz se um hook que falha ali nega a ação
-        self.assertEqual(list(hooks), ["SessionStart", "UserPromptSubmit", "PostToolUse", "Stop", "SessionEnd"])
+        self.assertEqual(list(hooks), ["SessionStart", "UserPromptSubmit", "PostToolUse", "SubagentStart",
+                                       "SubagentStop", "Stop", "SessionEnd"])
+        self.assertNotIn("PermissionRequest", hooks)
         for evento, grupos in hooks.items():
             with self.subTest(evento=evento):
                 (grupo,) = grupos
@@ -164,13 +288,18 @@ class Instalacao(unittest.TestCase):
         gerado, _ = self.gerar("copilot")
         hooks = json.loads(gerado[".copilot/hooks/fluxo.json"])["hooks"]
         self.assertNotIn("preToolUse", hooks)
+        self.assertNotIn("permissionRequest", hooks)
+        for ev in ("postToolUseFailure", "subagentStart", "subagentStop", "notification"):
+            self.assertIn(ev, hooks)
         self.assertEqual(set(hooks), set(panel.EVENTOS["copilot"]))
         self.assertTrue(all(h[0]["bash"].startswith('"$HOME/.local/bin/fluxo" hook') for h in hooks.values()))
 
     def test_kiro_v3_arquivo_e_v2_agente(self):
         v3, _ = self.gerar("kiro-v3")
-        triggers = [h["trigger"] for h in json.loads(v3[".kiro/hooks/fluxo.json"])["hooks"]]
-        self.assertIn("PostToolUse", triggers)
+        hooks_v3 = json.loads(v3[".kiro/hooks/fluxo.json"])["hooks"]
+        self.assertIn("PostToolUse", [h["trigger"] for h in hooks_v3])
+        # um Stop que sai com 1 faz o Kiro V3 começar outro turno: o comando nunca sai com 1
+        self.assertTrue(all(h["action"]["command"].endswith(" || true") for h in hooks_v3))
         self.assertNotIn(".kiro/agents/fluxo.json", v3)
         v2, _ = self.gerar("kiro-v2")
         agente = json.loads(v2[".kiro/agents/fluxo.json"])

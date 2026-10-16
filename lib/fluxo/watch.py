@@ -19,6 +19,7 @@ import subprocess
 import time
 
 from . import avisar, forge, tmux
+from . import config as cfgmod
 
 ROTULO = "dev.fluxo.watch"
 GUARDAR = 30 * 86400  # chaves vistas há mais que isso são esquecidas
@@ -42,6 +43,24 @@ def _gravar(caminho, dados):
     os.replace(tmp, caminho)
 
 
+def ler_avisos(estado_dir, desde=0, ultimos=200):
+    """Os avisos do avisos.jsonl a partir de `desde` (os `ultimos` mais novos). Nunca levanta: o panel lê
+    isso a cada poucos segundos."""
+    try:
+        linhas = (estado_dir / "avisos.jsonl").read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return []
+    out = []
+    for linha in linhas[-ultimos * 4:]:
+        try:
+            a = json.loads(linha)
+        except ValueError:
+            continue
+        if isinstance(a, dict) and isinstance(a.get("ts"), (int, float)) and a["ts"] >= desde:
+            out.append(a)
+    return out[-ultimos:]
+
+
 def _registrar(estado_dir, linha):
     with open(estado_dir / "avisos.jsonl", "a", encoding="utf-8") as fh:
         fh.write(json.dumps(linha, ensure_ascii=False) + "\n")
@@ -58,7 +77,7 @@ def tick(cfg, cam, run=subprocess.run, avisar_fn=None, agora=None):
     falha a cada VPN desligada."""
     agora = agora or time.time()
     avisar_fn = avisar_fn or (lambda titulo, texto: avisar.avisar(cfg["os"], titulo, texto))
-    cam.estado.mkdir(parents=True, exist_ok=True)
+    cfgmod.criar_estado(cam.estado)
     caminho = cam.estado / "vigia.json"
     with open(cam.estado / "vigia.lock", "w") as trava:
         try:
@@ -87,8 +106,9 @@ def tick(cfg, cam, run=subprocess.run, avisar_fn=None, agora=None):
         for e in evs:
             vistos[e["chave"]] = agora  # a última vez vista: a poda só esquece o que sumiu do forge
         for e in novos:
-            _registrar(cam.estado, {"ts": agora, "tipo": e["tipo"], "ref": e["ref"], "texto": e["texto"],
-                                    "titulo": e["titulo"], "url": e["url"]})
+            _registrar(cam.estado, dict({"ts": agora, "tipo": e["tipo"], "ref": e["ref"], "texto": e["texto"],
+                                         "titulo": e["titulo"], "url": e["url"]},
+                                        **({"ci": e["ci"]} if e.get("ci") else {})))  # o estado, e não só o texto
         if len(novos) > MAX_AVISOS:
             avisar_fn("fluxo watch", f"{len(novos)} novidades nas suas {('PRs' if cfg['forge'] == 'github' else 'MRs')}: fluxo watch")
         else:
@@ -172,7 +192,7 @@ def ligar(cfg, cam, run=subprocess.run, alvo=None, dentro_do_tmux=False):
         return 0, "watch ligado (systemd --user)"
     if not dentro_do_tmux and not alvo:
         return 3, "no WSL o watch roda numa janela do tmux: rode dentro do tmux, ou com --target <sessão>:"
-    cam.estado.mkdir(parents=True, exist_ok=True)  # antes de abrir: sem o registro, o loop ficaria órfão
+    cfgmod.criar_estado(cam.estado)  # antes de abrir: sem o registro, o loop ficaria órfão
     janela, _ = _ler_estado(cam.estado / "vigia-janela.json")
     if janela and tmux.pane_vivo(janela.get("pane"), janela.get("pane_pid"), tmux.panes_vivos(run)):
         return 0, f"o watch já está ligado na janela {janela.get('janela')}"

@@ -229,6 +229,6 @@ def eventos(prs, login, desde):
                 out.append(dict(base, chave=f"aprovada:{pr['ref']}@{pr['sha']}:{a['autor']}", tipo="aprovada",
                                 texto=f"aprovada por {a['autor']}"))
         if pr["ci"] in ("SUCCESS", "FAILURE"):
-            out.append(dict(base, chave=f"ci:{pr['ref']}@{pr['sha']}:{pr['ci']}", tipo="ci",
+            out.append(dict(base, chave=f"ci:{pr['ref']}@{pr['sha']}:{pr['ci']}", tipo="ci", ci=pr["ci"],
                             texto="CI verde" if pr["ci"] == "SUCCESS" else "CI quebrou"))
     return out

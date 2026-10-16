@@ -68,6 +68,16 @@ class Caminhos:
             return caminho.as_posix()
 
 
+def criar_estado(estado):
+    """O estado/ é 700: os eventos guardam o começo dos prompts e dos comandos, e o tasks.jsonl, o prompt
+    inteiro. O chmod vale também para quem vem de uma versão que a criava com o umask."""
+    Path(estado).mkdir(mode=0o700, parents=True, exist_ok=True)
+    try:
+        os.chmod(estado, 0o700)
+    except OSError:
+        pass
+
+
 def detectar_so(sistema=None, versao_kernel=None):
     sistema = sistema or platform.system()
     if sistema == "Darwin":

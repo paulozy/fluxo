@@ -134,6 +134,21 @@ tem skills, agentes nem hooks.
 | C13 | Com o panel, uma sessão do Codex: o `~/.local/share/fluxo/estado/eventos-*.jsonl` | os eventos dela | vazio, e nada no `hook-erros.log`: o hook roda dentro do sandbox e não pode gravar ali; avise |
 | C14 | `fluxo lock acquire --id t1` de dentro de uma sessão do Codex, depois feche a sessão | outra sessão pega a trava (o dono morreu) | a trava fica presa: o pid do dono não é o do Codex (`lock.pid_da_ferramenta`); avise |
 
+## Painel em 4 abas (v0.7.0)
+
+Os hooks e o `curses` da sua máquina decidem o que as abas mostram. O que a doc não confirma:
+
+| # | Teste | Esperado | Se falhar |
+|---|---|---|---|
+| P1 | No Mac, `python3 -c "import curses; print(hasattr(curses, 'get_wch'))"` | `True` (curses com caracteres largos) | `False`: acento e `█` podem sair errados; avise |
+| P2 | `fluxo panel` dentro do tmux | a tela abre | "o terminal não abriu a tela": o ncurses do sistema não conhece o `TERM` do tmux (`tmux-256color`); o fluxo tenta `screen-256color` e cai no texto; avise |
+| P3 | No iTerm com "Ambiguous characters are double-width" ligado | as barras `█░` alinhadas | desalinhadas: desligue a opção, ou avise para o fluxo usar ASCII |
+| P4 | Copilot: uma sessão que pede permissão para um comando | a sessão aparece em "pergunta" (a `notification` com `permission_prompt`) | fica em "trabalhando": essa versão não manda o `notification_type`; avise |
+| P5 | Copilot: peça uma tarefa que use o `researcher` | o subagente aparece na aba 1, com início e fim | não aparece: o `subagentStart` não veio (o `general-purpose` não avisa mesmo) |
+| P6 | Copilot e Kiro: a sessão aberta pelo `fluxo task` no panel | o pane certo, e Enter leva até ela | o hook não herda o `TMUX_PANE`: o panel mostra a pasta e não deixa pular |
+| P7 | Copilot com sandbox ligado: o `estado/eventos-*.jsonl` | os eventos | vazio: o hook roda no sandbox e não grava ali; libere `~/.local/share/fluxo` no `sandbox.userPolicy` |
+| P8 | Kiro: peça algo que use um subagente | a chamada da ferramenta `subagent` na aba 1, com o nome dele | sem nome: o `tool_input` dessa versão não traz o nome; avise |
+
 ## Depois
 
 Registre o resultado de cada linha no CHANGELOG, na versão que fechar a validação. O que divergiu

@@ -185,6 +185,11 @@ class Task(unittest.TestCase):
         with self.assertRaisesRegex(task.ErroUso, r"\$planejar"):
             self.abrir(prompt="$planejar X", cfg=cfg, tool="codex")
 
+    def test_estado_nasce_so_do_usuario(self):
+        self.assertFalse(self.cam.estado.exists())
+        self.assertEqual(self.abrir("PROJ-1", dry_run=True)[0], 0)
+        self.assertEqual(self.cam.estado.stat().st_mode & 0o777, 0o700)
+
     def test_habito_das_outras_ferramentas_no_codex(self):
         skills = montar.nomes_de_skills(RAIZ)
         for args in ((None, "/implementar PROJ-1", None), ("PROJ-1", "/implementar PROJ-1", None)):

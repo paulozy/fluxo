@@ -1,6 +1,7 @@
 """Linha de comando do fluxo.
 
-Saídas: 0 ok; 1 erro; 2 config ou uso inválido; 3 conflito (nada foi gravado).
+Saídas: 0 ok; 1 erro; 2 config ou uso inválido; 3 conflito (nada foi gravado); 130 o init interativo
+cancelado (EOF ou Ctrl-C).
 """
 import argparse
 import contextlib
@@ -12,7 +13,7 @@ import sys
 from pathlib import Path
 
 from . import config as cfgmod
-from . import doctor, empacotar, fonte, instalar, lock, messages, montar, panel, render, task, validate, varredura, vistas, watch
+from . import assistente, doctor, empacotar, fonte, instalar, lock, messages, montar, panel, render, task, validate, varredura, vistas, watch
 
 ERROS_DE_USO = (cfgmod.ErroConfig, montar.ErroMontagem, render.ErroTemplate, fonte.ErroFonte)
 
@@ -243,9 +244,23 @@ def cmd_panel(args, raiz):
     return panel.tela(cam, run=subprocess.run, ligados=cfg["modules"], inicial=tela)
 
 
-def cmd_init(args, raiz):
+INIT_PADROES = {"base": "develop", "code_dir": "~/code", "chat": "draft", "tracker": "none", "engine": "v2"}
+
+
+def cmd_init(args, raiz, ler=input, saida=None, interativo=None):
+    """Com --tool e --forge, grava sem perguntar. Sem eles, num terminal, o assistente pergunta o resto."""
     cam = _caminhos(args)
-    if cam.config.exists() and not args.force:
+    saida = saida or sys.stderr
+    faltam = [flag for flag, valor in (("--tool", args.tool), ("--forge", args.forge)) if not valor]
+    if faltam and interativo is None:  # com as duas flags, nem olha o terminal (o stdin pode estar fechado)
+        interativo = assistente.pode_perguntar(args, sys.stdin, sys.stdout, os.environ)
+    perguntando = bool(faltam) and bool(interativo)
+    if faltam and not perguntando:
+        motivo = assistente.desligado(args, os.environ)
+        dica = f"{motivo} desliga as perguntas" if motivo else "ou rode num terminal para responder às perguntas"
+        print(f"fluxo: {'faltam' if len(faltam) > 1 else 'falta'} {' e '.join(faltam)} ({dica})", file=sys.stderr)
+        return 2
+    if cam.config.exists() and not args.force and not perguntando:
         print(f"fluxo: {cam.config} já existe; --force para sobrescrever", file=sys.stderr)
         return 2
     anterior = {}
@@ -254,13 +269,34 @@ def cmd_init(args, raiz):
             anterior = json.loads(cam.config.read_text(encoding="utf-8"))
         except ValueError:
             anterior = {}
+    existentes = montar.modulos_existentes(raiz)
+    perguntas = assistente.Perguntas(ler, saida)
+    try:
+        if perguntando and cam.config.exists() and not args.force and not perguntas.sim(
+                f"Já existe {cam.exibir(cam.config)}. Refazer, com os valores dela de padrão?", False):
+            print("nada foi gravado", file=saida)
+            return 0
+        if perguntando:
+            herdado, avisos = assistente.herdadas(anterior, existentes)
+            for aviso in avisos:
+                perguntas.escrever(f"aviso: {aviso}")
+            assistente.perguntar(args, anterior, raiz, ler, saida)
+        else:
+            herdado = {k: anterior[k] for k in assistente.HERDADAS + ("modules",)
+                       if isinstance(anterior, dict) and k in anterior}
+    except (assistente.Cancelado, KeyboardInterrupt):
+        print("\ncancelado; nada foi gravado", file=saida)
+        return 130
+    for chave, padrao in INIT_PADROES.items():  # `--base ""` continua chegando ao validar, e dá erro
+        if getattr(args, chave) is None:
+            setattr(args, chave, padrao)
     tools = list(dict.fromkeys(args.tool))  # `--tool copilot --tool claude`: a primeira é a padrão
     cfg = {"version": 1, "tools": tools, "forge": args.forge, "tracker": args.tracker,
            "chat": args.chat, "os": args.os or cfgmod.detectar_so(), "modules": [],
            "git": {"base": args.base}, "code_dir": args.code_dir, "models": {}}
-    for chave in ("modules", "models", "task", "watch", "promote", "validate"):
-        if isinstance(anterior, dict) and chave in anterior:
-            cfg[chave] = anterior[chave]
+    cfg.update(herdado)
+    if args.modulos is not None:  # o assistente perguntou os módulos
+        cfg["modules"] = args.modulos
     if "kiro" in tools:
         cfg["kiro"] = {"engine": args.engine}
     if args.forge == "gitlab":
@@ -268,13 +304,30 @@ def cmd_init(args, raiz):
     if args.promote_to:
         cfg["promote"] = {"targets": [a.strip() for a in args.promote_to.split(",") if a.strip()]}
     try:
-        cfgmod.validar(cfg, montar.modulos_existentes(raiz))
+        cfgmod.validar(cfg, existentes)
     except cfgmod.ErroConfig as exc:
         print(f"fluxo: {exc}", file=sys.stderr)
         return 2
+    texto = json.dumps(cfg, ensure_ascii=False, indent=2) + "\n"
+    if perguntando:
+        print(f"\nA config:\n{texto}", file=saida, end="")
+        try:
+            if not perguntas.sim(f"Gravar em {cam.exibir(cam.config)}?", True):
+                print("nada foi gravado", file=saida)
+                return 0
+        except (assistente.Cancelado, KeyboardInterrupt):
+            print("\ncancelado; nada foi gravado", file=saida)
+            return 130
     cam.config_dir.mkdir(parents=True, exist_ok=True)
-    cam.config.write_text(json.dumps(cfg, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    print(f"config gravada em {cam.config}. Agora: fluxo install --dry-run")
+    tmp = cam.config.with_name(".config.json.tmp")  # refazer é o caminho comum: um Ctrl-C não deixa meio arquivo
+    tmp.write_text(texto, encoding="utf-8")
+    os.replace(tmp, cam.config)
+    if not perguntando:
+        print(f"config gravada em {cam.config}. Agora: fluxo install --dry-run")
+        return 0
+    print(f"config gravada em {cam.exibir(cam.config)}. Agora:")
+    for passo in assistente.proximos_passos(cfg, cam.exibir(Path(raiz) / "fluxo")):
+        print(f"  {passo}")
     return 0
 
 
@@ -367,20 +420,23 @@ def parser():
     ap = argparse.ArgumentParser(prog="fluxo", description="o fluxo de dev portátil (Claude Code, Copilot CLI, Kiro CLI, Codex CLI)")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
-    p = sub.add_parser("init", help="cria a config desta máquina")
-    p.add_argument("--tool", required=True, action="append", choices=cfgmod.TOOLS,
+    p = sub.add_parser("init", help="cria a config desta máquina (sem --tool e --forge, num terminal, pergunta)")
+    # sem default nas flags: o assistente pergunta só o que não veio, e o cmd_init aplica os padrões
+    p.add_argument("--tool", action="append", choices=cfgmod.TOOLS,
                    help="a ferramenta; repita para instalar várias (a primeira é a padrão do `fluxo task`)")
-    p.add_argument("--forge", required=True, choices=cfgmod.EIXOS["forge"])
-    p.add_argument("--base", default="develop", help="branch de desenvolvimento (padrão: develop)")
-    p.add_argument("--code-dir", default="~/code", help="onde ficam os clones (padrão: ~/code)")
+    p.add_argument("--forge", choices=cfgmod.EIXOS["forge"])
+    p.add_argument("--base", help="branch de desenvolvimento (padrão: develop)")
+    p.add_argument("--code-dir", help="onde ficam os clones (padrão: ~/code)")
     p.add_argument("--os", choices=cfgmod.EIXOS["os"], help="padrão: detectado")
-    p.add_argument("--chat", default="draft", choices=cfgmod.EIXOS["chat"])
-    p.add_argument("--tracker", default="none", choices=cfgmod.EIXOS["tracker"])
-    p.add_argument("--engine", default="v2", choices=cfgmod.ENGINES, help="Kiro: v2 (padrão do 2.x) ou v3")
+    p.add_argument("--chat", choices=cfgmod.EIXOS["chat"], help="padrão: draft")
+    p.add_argument("--tracker", choices=cfgmod.EIXOS["tracker"], help="padrão: none")
+    p.add_argument("--engine", choices=cfgmod.ENGINES, help="Kiro: v2 (padrão do 2.x) ou v3")
     p.add_argument("--gitlab-host", help="ex.: gitlab.empresa.com.br")
     p.add_argument("--promote-to", help="módulo promote: as bases depois da --base, em ordem (ex.: staging,main)")
     p.add_argument("--force", action="store_true")
-    p.set_defaults(fn=cmd_init)
+    p.add_argument("--no-input", action="store_true",
+                   help="nunca pergunta: sem --tool e --forge, sai com erro (também com CI definida ou TERM=dumb)")
+    p.set_defaults(fn=cmd_init, modulos=None)
 
     p = sub.add_parser("install", help="grava instruções, agentes e skills no nível do usuário")
     p.add_argument("--dry-run", action="store_true")

@@ -154,7 +154,7 @@ Os hooks e o `curses` da sua máquina decidem o que as abas mostram. O que a doc
 | # | Teste | Esperado | Se falhar |
 |---|---|---|---|
 | V1 | `fluxo modules --enable validate && fluxo install` | o aviso "rode `fluxo validate enable`" | sem aviso: confira o módulo na config |
-| V2 | `fluxo validate enable` numa máquina com acesso ao GitHub por ssh | o clone na v0.5.0, a config do pr-reviewer e o comando `pr-review` | "Permission denied (publickey)": configure a chave (`ssh -T git@github.com`) ou o HTTPS com `gh auth setup-git` e um `insteadOf` |
+| V2 | `fluxo validate enable` numa máquina com o `gh` logado | o clone na v0.5.0, a config do pr-reviewer e o comando `pr-review` | "Authentication failed" ou "could not read Username": `gh auth setup-git`; com ssh, o `insteadOf` do README e `ssh -T git@github.com` |
 | V3 | `fluxo doctor` | as linhas do node, do docker, do pr-reviewer e da config | node abaixo de 22.18: atualize; o `workspaceRoot` diferente do `code_dir`: acerte a config do pr-reviewer |
 | V4 | `/validar <id>` numa tarefa pequena, em cada ferramenta | o `start` em segundo plano e o `status --wait` até o veredito | a ferramenta mata o comando antes de 540 s: avise, para o `--wait` diminuir |
 | V5 | Codex: o `/validar` | pede a aprovação para rodar fora do sandbox | roda dentro e falha no docker ou na rede: avise |

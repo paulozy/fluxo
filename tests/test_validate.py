@@ -271,7 +271,8 @@ class SemRede(unittest.TestCase):
         code, msgs = validate.enable(self.cfg, self.cam, run=run, env={})
         self.assertEqual(code, 1)
         self.assertIn("Permission denied (publickey)", msgs[0])
-        self.assertIn("ssh -T git@github.com", msgs[0])
+        self.assertIn("gh auth setup-git", msgs[0])
+        self.assertIn("insteadOf https://github.com/", msgs[0])
         self.assertFalse((self.cam.dados / "pr-reviewer").exists())
 
     def test_timeout_nao_deixa_pasta_pela_metade(self):

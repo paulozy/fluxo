@@ -24,13 +24,16 @@ from .task import ID_RE
 
 # a versão do pr-reviewer que esta versão do fluxo usa
 PR_REVIEWER = {
-    "url": "git@github.com:paulozy/pr-reviewer-core.git",
+    # HTTPS: o fluxo já usa o gh, e o `gh auth setup-git` libera o clone de um repo privado; quem usa ssh redireciona
+    # com um insteadOf
+    "url": "https://github.com/paulozy/pr-reviewer-core.git",
     "tag": "v0.5.0",
     "sha": "d10f37c88c4a073a492755017902c9730eff677e",
 }
 ESTADO = "pr-reviewer.json"
 TIMEOUT = 300
-DICAS = "confira o acesso ao repo: `ssh -T git@github.com`, ou `gh auth setup-git` se você usa HTTPS"
+DICAS = ("confira o acesso ao repo: `gh auth setup-git` (com o gh logado); com ssh, "
+         "`git config --global url.git@github.com:.insteadOf https://github.com/` e `ssh -T git@github.com`")
 # o `git rev-parse --local-env-vars`: com uma delas herdada, o git falaria com outro repo
 GIT_LOCAIS = ("GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_CONFIG", "GIT_CONFIG_PARAMETERS", "GIT_CONFIG_COUNT",
               "GIT_OBJECT_DIRECTORY", "GIT_DIR", "GIT_WORK_TREE", "GIT_IMPLICIT_WORK_TREE", "GIT_GRAFT_FILE",

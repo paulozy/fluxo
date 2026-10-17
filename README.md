@@ -83,7 +83,8 @@ e lembra de rodar `fluxo install`.
 O `fluxo install` não usa rede. Quem traz o pr-reviewer é o `fluxo validate enable`, como o `watch enable`:
 
 - clona o pr-reviewer na tag que esta versão do fluxo fixa (em `lib/fluxo/validate.py`, com o sha do commit,
-  que é conferido) em `~/.local/share/fluxo/pr-reviewer`, pelo seu acesso ao GitHub;
+  que é conferido) em `~/.local/share/fluxo/pr-reviewer`, por HTTPS, com o seu acesso ao GitHub: o
+  `gh auth setup-git` libera o repo privado; com ssh, `git config --global url.git@github.com:.insteadOf https://github.com/`;
 - cria `~/.config/pr-reviewer/config.json` só se não existir: `workspaceRoot` = `code_dir`, as bases do
   `git.base` e o perfil `local` (`--profile <nome>` troca);
 - cria o comando `~/.local/bin/pr-review` só se não houver um. As skills não dependem dele: usam

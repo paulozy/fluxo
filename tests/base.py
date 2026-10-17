@@ -27,11 +27,11 @@ CENARIOS = {
     "kiro-v3": {"tools": ["kiro"], "forge": "github", "os": "wsl", "kiro": {"engine": "v3"}},
     # todos os módulos ligados: cada fase acrescenta os seus
     "copilot-tudo": {"tools": ["copilot"], "forge": "gitlab", "os": "mac", "gitlab": {"host": "gitlab.exemplo.com"},
-                     "modules": ["messages", "panel", "promote", "reviewer", "task", "lock", "watch"],
+                     "modules": ["messages", "panel", "promote", "reviewer", "task", "lock", "watch", "validate"],
                      "git": {"base": "develop"}, "promote": {"targets": ["staging", "main"]}},
     # tudo o que o Claude aceita (o panel não: lá é o agent-tree), no GitHub
     "claude-tudo": {"tools": ["claude"], "forge": "github", "os": "linux",
-                    "modules": ["messages", "promote", "reviewer", "task", "lock", "watch"]},
+                    "modules": ["messages", "promote", "reviewer", "task", "lock", "watch", "validate"]},
     # o promote sem o módulo messages: o aviso vira rascunho
     "claude-promote": {"tools": ["claude"], "forge": "github", "os": "linux", "modules": ["promote"]},
     # o panel no Kiro V2: os hooks embutidos num agente `fluxo`, que vira o padrão
@@ -39,12 +39,12 @@ CENARIOS = {
                       "modules": ["panel", "watch"]},
     # duas ferramentas, com o copilot de padrão: o panel só vale para ele, e o watch é da máquina
     "copilot-claude": {"tools": ["copilot", "claude"], "forge": "github", "os": "linux",
-                       "modules": ["messages", "panel", "promote", "reviewer", "task", "lock", "watch"]},
+                       "modules": ["messages", "panel", "promote", "reviewer", "task", "lock", "watch", "validate"]},
     # o Codex sozinho: as skills no lugar oficial, ~/.agents/skills
     "codex": {"tools": ["codex"], "forge": "github", "os": "linux"},
     # com o copilot junto, as skills do Codex vão para ~/.codex/skills (o Copilot também lê ~/.agents/skills)
     "copilot-codex": {"tools": ["copilot", "codex"], "forge": "gitlab", "os": "mac", "gitlab": {"host": "gitlab.exemplo.com"},
-                      "modules": ["messages", "panel", "promote", "reviewer", "task", "lock", "watch"]},
+                      "modules": ["messages", "panel", "promote", "reviewer", "task", "lock", "watch", "validate"]},
 }
 PASTAS_FERRAMENTA = (".claude", ".copilot", ".kiro", ".codex", ".agents", "Library",
                      ".config/systemd")  # + agendamento do watch

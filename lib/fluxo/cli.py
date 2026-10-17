@@ -444,7 +444,7 @@ def parser():
     p.add_argument("--recipe", metavar="REPO", help="start/status/stop: o runbook do repo, em vez da revisão da tarefa")
     p.add_argument("--fix", action="store_true", help="start --recipe: refaz com o último --check que falhou")
     p.add_argument("--check", action="store_true", help="start --recipe: sobe o stack com o runbook do perfil")
-    p.add_argument("--backend", help="start: a ferramenta dos agentes do pr-review (claude, kiro ou codex)")
+    p.add_argument("--backend", choices=cfgmod.TOOLS, help="start: a ferramenta dos agentes do pr-review (no copilot, vale o backend da config do pr-reviewer)")
     p.add_argument("--wait", type=int, default=0, help="status: segundos esperando terminar (até 540)")
     p.set_defaults(fn=cmd_validate)
 

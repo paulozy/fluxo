@@ -5,10 +5,10 @@
   veredito é REPROVAR, PRECISA DE HUMANO ou APROVÁVEL.
 - `{{skill.receita}} <repo>` escreve, com a confirmação do usuário, o runbook que ensina o pr-reviewer a subir o
   stack do repo, e testa esse runbook subindo o stack.
-- Os dois rodam em segundo plano (`fluxo validate start`) e são acompanhados com `fluxo validate status`: uma
-  revisão leva de 4 a 20 minutos, mais que o limite de um comando da ferramenta.
-- O pr-reviewer nunca lê arquivo de env, e você também não: as chaves de integração ficam em
-  `~/.config/pr-reviewer/envs/<repo>.env`, que só o usuário edita.
+- Os dois rodam em segundo plano (`fluxo validate start`) e são acompanhados com `fluxo validate status --wait 100`
+  (rodado de novo até terminar): uma revisão leva de 4 a 20 minutos, mais que o limite de um comando da ferramenta.
+- Os agentes do pr-reviewer nunca leem arquivo de env, e você também não. As chaves de integração ficam em
+  `~/.config/pr-reviewer/envs/<repo>.env`, que só o usuário edita e que só o pr-reviewer lê, para subir o stack.
 - O pr-reviewer vem para a máquina com `fluxo validate enable`, que o usuário roda (ele clona por git, com o
   acesso dele).
 <!-- se module:reviewer -->

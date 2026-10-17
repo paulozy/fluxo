@@ -33,7 +33,7 @@ PR_REVIEWER = {
 ESTADO = "pr-reviewer.json"
 TIMEOUT = 300
 DICAS = ("confira o acesso ao repo: `gh auth setup-git` (com o gh logado); com ssh, "
-         "`git config --global url.git@github.com:.insteadOf https://github.com/` e `ssh -T git@github.com`")
+         "`git config --global url.git@github.com:paulozy/.insteadOf https://github.com/paulozy/` e `ssh -T git@github.com`")
 # o `git rev-parse --local-env-vars`: com uma delas herdada, o git falaria com outro repo
 GIT_LOCAIS = ("GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_CONFIG", "GIT_CONFIG_PARAMETERS", "GIT_CONFIG_COUNT",
               "GIT_OBJECT_DIRECTORY", "GIT_DIR", "GIT_WORK_TREE", "GIT_IMPLICIT_WORK_TREE", "GIT_GRAFT_FILE",
@@ -96,6 +96,12 @@ def _git(run, env, args, cwd=None, timeout=TIMEOUT):
                text=True, timeout=timeout)
 
 
+def _linha(texto):
+    """Texto de terceiro (título de achado, corpo de script, motivo) numa linha só: com uma quebra, ele forjaria uma
+    linha do fluxo, como a do comando que grava a receita."""
+    return " ".join(str(texto).splitlines())
+
+
 def _fim(texto, linhas=6):
     return "\n".join(texto.strip().splitlines()[-linhas:])
 
@@ -135,9 +141,9 @@ def limpo(run, env, clone, sha, tag):
         return False, "tem branch, stash ou tag que não é a do fluxo"
     reflog = _git(run, env, ["reflog", "--format=%H", "HEAD"], cwd=clone)
     if reflog.returncode != 0 or len(reflog.stdout.split()) != 1:
-        return False, "tem histórico de checkout no reflog (um commit seu pode estar só nele)"
+        return False, "não tem exatamente uma entrada no reflog (um commit seu pode estar só nele)"
     worktrees = _git(run, env, ["worktree", "list", "--porcelain"], cwd=clone)
-    if worktrees.returncode != 0 or worktrees.stdout.count("worktree ") != 1:
+    if worktrees.returncode != 0 or sum(l.startswith("worktree ") for l in worktrees.stdout.splitlines()) != 1:
         return False, "tem outra worktree"
     return True, ""
 
@@ -218,9 +224,11 @@ def enable(cfg, cam, run=subprocess.run, env=None, fonte=None, profile="local"):
     msgs = []
     proprio = bool((cfg.get("validate") or {}).get("dir"))
     # trocar entre o clone do fluxo e um seu passa pelo disable: o comando pr-review e o clone ficam com dono certo
-    if estado and bool(estado.get("proprio")) != proprio:
-        antes = "o seu clone em validate.dir" if estado.get("proprio") else f"o clone do fluxo em {estado.get('dir')}"
-        return 1, [f"o validate está ligado com {antes}: rode `fluxo validate disable` antes de trocar"]
+    if estado and (bool(estado.get("proprio")) != proprio or (proprio and estado.get("dir") != str(clone))):
+        if estado.get("proprio"):
+            return 1, [f"o validate está ligado com o seu clone em {estado.get('dir')}: rode `fluxo validate disable` antes de trocar"]
+        return 1, [f"o validate está ligado com o clone do fluxo em {estado.get('dir')}: rode `fluxo validate disable` antes de "
+                   "trocar (se o disable mantiver o clone, por ter algo seu, salve o que quiser e apague a pasta)"]
     try:
         genv = _ambiente(env, run)
     except FileNotFoundError:
@@ -302,9 +310,11 @@ def disable(cfg, cam, run=subprocess.run, env=None):
         else:
             # o estado fica: é ele que diz ao próximo enable que o clone é do fluxo
             tira_estado = False
-            msgs.append(f"o clone em {clone} {motivo}; ficou como está")
+            msgs.append(f"o clone em {clone} {motivo}; ficou como está (salve o que quiser e apague a pasta, se não serve mais)")
     if tira_estado:
         estado_arq.unlink()
+    elif not bin_.exists():
+        _gravar(estado_arq, dict(estado, wrapper=False))
     msgs.append(f"a config do pr-reviewer fica em {config_pr_reviewer(cam, env)}")
     return 0, msgs
 
@@ -457,23 +467,33 @@ def rodar(cam, ch, popen=subprocess.Popen):
     eu = {"pid": os.getpid(), "inicio": lock.inicio_do_pid(os.getpid())}
     sessao = f"validar-{ch.replace('/', '-')}"
     t = lock.Trava(cam.estado) if pedido.get("trava") else None
-    if t:
-        _gravar(pasta / "fase.json", dict(eu, fase="esperando a trava do stack"))
-        ok, dono, _ = lock.pegar_esperando(t, int(pedido.get("espera", ESPERA)), sessao=sessao, pid=os.getpid(), id_=pedido.get("id"))
-        if not ok:
-            _gravar(pasta / "fim.json", {"ocupada": lock.descrever(dono, True)})
-            return lock.OCUPADA
-    recebido, proc = [], None
+    recebido, vivo = [], {"proc": None, "esperando": True}
 
     def repassar(sinal, _frame):
         recebido.append(sinal)
+        if vivo["esperando"]:  # ainda sem o pr-review: para aqui mesmo
+            raise _Parado()
+        proc = vivo["proc"]
         if proc is not None and proc.poll() is None:
             proc.send_signal(sinal)
 
     antigos = {s: signal.signal(s, repassar) for s in (signal.SIGTERM, signal.SIGHUP)}
     try:
+        try:
+            if t:
+                _gravar(pasta / "fase.json", dict(eu, fase="esperando a trava do stack"))
+                ok, dono, _ = lock.pegar_esperando(t, int(pedido.get("espera", ESPERA)), sessao=sessao, pid=os.getpid(), id_=pedido.get("id"))
+                if not ok:
+                    _gravar(pasta / "fim.json", {"ocupada": lock.descrever(dono, True)})
+                    return lock.OCUPADA
+            vivo["esperando"] = False
+        except _Parado:
+            _gravar(pasta / "fim.json", {"codigo": 128 + recebido[0], "parado": True})
+            return 128 + recebido[0]
         _gravar(pasta / "fase.json", dict(eu, fase="rodando"))
-        proc = popen(pedido["argv"], stdin=subprocess.DEVNULL)
+        proc = vivo["proc"] = popen(pedido["argv"], stdin=subprocess.DEVNULL)
+        if recebido:  # o sinal que chegou antes do popen
+            proc.send_signal(recebido[-1])
         codigo = proc.wait()  # o wait é retomado depois do handler
         codigo = 128 + recebido[0] if recebido else codigo
         _gravar(pasta / "fim.json", {"codigo": codigo, "terminado": time.strftime("%Y-%m-%d %H:%M:%S"),
@@ -483,7 +503,11 @@ def rodar(cam, ch, popen=subprocess.Popen):
         for s, h in antigos.items():
             signal.signal(s, h)
         if t:
-            t.soltar(sessao)
+            t.soltar(sessao)  # só solta se for desta sessão: vale também para um sinal no meio da espera
+
+
+class _Parado(Exception):
+    """Um SIGTERM ou SIGHUP antes do pr-review começar."""
 
 
 def stop(cam, ch, matar=os.killpg):
@@ -533,8 +557,8 @@ def status(cam, ch, esperar=0, dormir=time.sleep, relogio=time.monotonic):
     if not dados:
         return 1, [f"{ch}: o pr-review saiu com {fim['codigo']} sem relatório", logs]
     veredito = dados.get("verdict") or {}
-    linhas = [f"veredito: {veredito.get('decision', '?')}{' (só estática)' if veredito.get('staticOnly') else ''}"]
-    linhas += [f"- {r}" for r in veredito.get("reasons") or []]
+    linhas = [f"veredito: {_linha(veredito.get('decision', '?'))}{' (só estática)' if veredito.get('staticOnly') else ''}"]
+    linhas += [f"- {_linha(r)}" for r in veredito.get("reasons") or []]
     linhas.append(f"relatório: {report.with_name('report.md')}")
     return 0, linhas
 
@@ -544,25 +568,28 @@ def _resumo_receita(pasta, fim, logs):
         r = json.loads((pasta / "saida.log").read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return 1, [f"o recipe saiu com {fim['codigo']} sem o JSON", logs]
-    linhas = [f"receita de {r.get('repo')}: {r.get('status')}"]
+    linhas = [f"receita de {_linha(r.get('repo'))}: {_linha(r.get('status'))}"]
     if r.get("status") in ("healthy", "unhealthy"):
         for st in r.get("steps") or []:
             detalhe = (st.get("detail") or "").splitlines()
-            linhas.append(f"- {'ok' if st.get('ok') else 'falhou'} {st.get('phase')} {st.get('name')}: {detalhe[0] if detalhe else ''}")
+            linhas.append(f"- {'ok' if st.get('ok') else 'falhou'} {_linha(st.get('phase'))} {_linha(st.get('name'))}: {_linha(detalhe[0]) if detalhe else ''}")
         return 0, linhas + [logs]
-    linhas += r.get("summary") or []
-    linhas += [f"atenção: {w}" for w in r.get("warnings") or []]
-    linhas += r.get("diff") or []
-    linhas += r.get("failures") or []
+    # o comando que grava vem logo depois do status, antes de qualquer texto de terceiro
     if r.get("status") == "pending":
-        linhas.append(f"para gravar, depois do OK: fluxo validate exec -- recipe {shlex.quote(str(r.get('repo')))} "
-                      f"--apply={shlex.quote(str(r.get('proposal')))} --confirm={shlex.quote(str(r.get('confirm')))}")
+        linhas.append(f"para gravar, depois do OK: fluxo validate exec -- recipe {shlex.quote(_linha(r.get('repo')))} "
+                      f"--apply={shlex.quote(_linha(r.get('proposal')))} --confirm={shlex.quote(_linha(r.get('confirm')))}")
+    linhas += [_linha(x) for x in r.get("summary") or []]
+    linhas += [f"atenção: {_linha(w)}" for w in r.get("warnings") or []]
+    linhas += [_linha(x) for x in r.get("diff") or []]
+    linhas += [_linha(x) for x in r.get("failures") or []]
     return 0, linhas + [logs]
 
 
 # ── doctor ───────────────────────────────────────────────────────────────────
 
-NODE_MINIMO = (22, 18)  # o type stripping ligado e sem aviso: o pr-reviewer roda o .ts direto
+# o type stripping ligado sem flag: no 22 a partir do 22.18, no 23 a partir do 23.6 (as notas de versão do Node)
+def node_serve(major, minor):
+    return (major == 22 and minor >= 18) or (major == 23 and minor >= 6) or major >= 24
 
 
 def checar(cfg, cam, run, which, env):
@@ -577,12 +604,12 @@ def checar(cfg, cam, run, which, env):
         m = re.match(r"v(\d+)\.(\d+)", saida.strip())
         if cod != 0 or not m:
             out.append((AVISO, f"node --version não respondeu: {saida.strip()[:80]}"))
-        elif (int(m.group(1)), int(m.group(2))) < NODE_MINIMO:
-            out.append((FALHA, f"node {saida.strip()}: o pr-reviewer precisa do 22.18 ou mais novo"))
+        elif not node_serve(int(m.group(1)), int(m.group(2))):
+            out.append((FALHA, f"node {saida.strip()}: o pr-reviewer precisa do 22.18+ (ou do 23.6+), que roda o .ts direto"))
         else:
             out.append((OK, f"node {saida.strip()}"))
     out.append((OK, "docker") if which("docker") else
-               (AVISO, "docker não está no PATH: o /validar fica só com a revisão estática"))
+               (AVISO, "docker não está no PATH: a validação fica só com a revisão estática"))
     estado = _ler(cam.estado / ESTADO)
     clone = Path(estado["dir"]) if estado.get("dir") else pasta(cfg, cam)
     if not estado:
@@ -601,9 +628,10 @@ def checar(cfg, cam, run, which, env):
     raiz = os.path.expanduser(cfg["code_dir"])
     if not dados:
         out.append((AVISO, f"{conf} não existe ou não é JSON: rode `fluxo validate enable`"))
-    elif os.path.normpath(os.path.expanduser(str(dados.get("workspaceRoot", "")))) != os.path.normpath(raiz):
+    elif not os.path.isabs(str(dados.get("workspaceRoot", ""))) or os.path.normpath(str(dados["workspaceRoot"])) != os.path.normpath(raiz):
+        # o pr-reviewer usa o valor como está, sem expandir o ~
         out.append((AVISO, f"o workspaceRoot do pr-reviewer ({dados.get('workspaceRoot')}) não é o code_dir do fluxo "
-                           f"({raiz}): o /validar não acharia os repos"))
+                           f"({raiz}), em caminho absoluto: a validação não acharia os repos"))
     else:
         out.append((OK, f"config do pr-reviewer em {conf}"))
     if estado:

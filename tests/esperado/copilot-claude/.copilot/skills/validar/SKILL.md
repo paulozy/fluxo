@@ -15,8 +15,9 @@ O pedido: o texto que veio junto do comando (se não veio nada, pergunte)
 
 ## 1. Antes de rodar
 
-- O pr-reviewer tem de estar na máquina: o `fluxo doctor` mostra a linha `pr-reviewer v… em …`. Se não
-  estiver, peça ao usuário para rodar `fluxo validate enable` (ele clona por git, com o acesso dele).
+- O pr-reviewer tem de estar na máquina: o `fluxo doctor` mostra uma linha OK dele (`pr-reviewer v… em …`, ou
+  `pr-reviewer: o seu clone em …`). Se não estiver, peça ao usuário para rodar `fluxo validate enable` (ele clona
+  por git, com o acesso dele).
 - Commite o que falta em cada worktree da tarefa: o pr-reviewer só vê o que está commitado.
 
 ## 2. Rode em segundo plano
@@ -34,7 +35,7 @@ novo.
 ## 3. Acompanhe
 
 ```bash
-fluxo validate status <id> --wait 540
+fluxo validate status <id> --wait 100
 ```
 
 - **Saída 75:** ainda rodando, ou esperando a trava do stack. Rode de novo, até terminar.

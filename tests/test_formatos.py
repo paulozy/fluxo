@@ -189,12 +189,33 @@ class Formatos(unittest.TestCase):
         self.assertIn("Antes da MR, o `/validar`", tudo[".copilot/instructions/fluxo.instructions.md"])
         codex, _ = gerar("codex", modules=["validate"])
         self.assertIn("fluxo validate start <id> --backend codex", codex[".agents/skills/validar/SKILL.md"])
-        self.assertIn("rode este comando fora do sandbox", codex[".agents/skills/validar/SKILL.md"])
-        self.assertIn("O `--check` sobe containers: rode fora do sandbox", codex[".agents/skills/receita/SKILL.md"])
+        for nome in ("validar", "receita"):
+            self.assertIn("rode cada um\n  fora do sandbox, com a aprovação do usuário", codex[f".agents/skills/{nome}/SKILL.md"], nome)
+        self.assertNotIn("fora do sandbox", tudo[".copilot/skills/receita/SKILL.md"])
+        self.assertIn("a proposta usa o backend da config dele", tudo[".copilot/skills/receita/SKILL.md"])
         self.assertNotIn("revisar-pr", codex[".codex/AGENTS.md"] if ".codex/AGENTS.md" in codex else "", "without reviewer, no pointer to it")
         sem, _ = gerar("claude")
         self.assertNotIn(".claude/skills/validar/SKILL.md", sem)
         self.assertNotIn("/validar", sem[".claude/skills/concluir/SKILL.md"])
+
+    def test_regras_de_seguranca_das_skills_do_validate(self):
+        """O que torna as skills seguras, conferido pelo sentido e não só pelo golden (que é regenerado)."""
+        gerado, _ = gerar("claude-tudo")
+        validar = gerado[".claude/skills/validar/SKILL.md"]
+        receita = gerado[".claude/skills/receita/SKILL.md"]
+        for texto in (validar, receita):
+            self.assertIn("Nunca abra arquivo de env (`.env*`) nem `~/.config/pr-reviewer/envs/`", texto)
+            self.assertIn("--wait 100", texto)
+            self.assertNotIn("--wait 540", texto)
+        self.assertIn("**PRECISA DE HUMANO:** pare.", validar)
+        self.assertIn("Nada é gravado sem o ok do usuário sobre o diff que você mostrou", receita)
+        self.assertIn("Nunca troque o hash nem edite a proposta", receita)
+        self.assertIn("Sem o ok, pare aqui.", receita)
+        self.assertIn("fluxo validate exec -- recipe <repo> --apply=<proposta> --confirm=<hash>", receita)
+        self.assertIn("fluxo validate status --recipe <repo> --wait 100", receita)
+        self.assertIn("faça **no máximo um** reparo", receita)
+        self.assertIn("Nunca abra o arquivo para conferir.", receita)
+        self.assertLess(receita.index("pergunte se pode gravar"), receita.index("## 3. Com o ok, grave"))
 
     def test_comandos_do_validate_passam_pelo_parser(self):
         """Cada `fluxo validate …` das skills geradas, com os marcadores trocados, é aceito pela linha de comando."""

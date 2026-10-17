@@ -12,6 +12,7 @@ from unittest import mock
 
 from base import RAIZ, cfgmod, escrever_config
 from fluxo import cli, lock, validate
+import signal
 import sys
 import textwrap
 import time
@@ -153,6 +154,8 @@ class EnableDisable(unittest.TestCase):
                 self.assertTrue(self.clone.exists(), "the disable keeps it too")
                 self.assertTrue(any("ficou como está" in m for m in msgs), msgs)
                 self.assertTrue((self.cam.estado / validate.ESTADO).exists(), "and the state: it says the clone is ours")
+                self.assertFalse(json.loads((self.cam.estado / validate.ESTADO).read_text())["wrapper"], "the command is gone")
+                self.assertFalse(any("mudou desde o enable" in m for m in self.disable()[1]), "a second disable does not complain")
                 self.assertNotIn("não foi o fluxo que clonou", " ".join(self.enable(v2)[1]))
 
     def test_disable_tira_o_clone_limpo_e_o_comando_e_deixa_a_config(self):
@@ -207,6 +210,16 @@ class EnableDisable(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("rode `fluxo validate disable` antes de trocar", msgs[0])
         self.assertIn(str(self.clone), self.bin.read_text(), "the command still points at the fluxo clone")
+
+    def test_trocar_de_um_clone_seu_para_outro_passa_pelo_disable(self):
+        a, b = self.tmp / "clone-a", self.tmp / "clone-b"
+        for c in (a, b):
+            subprocess.run(["git", "clone", "-q", str(self.remoto.bare), str(c)], check=True, capture_output=True)
+        self.assertEqual(validate.enable(dict(self.cfg, validate={"dir": str(a)}), self.cam, run=rodar_git, env={})[0], 0)
+        code, msgs = validate.enable(dict(self.cfg, validate={"dir": str(b)}), self.cam, run=rodar_git, env={})
+        self.assertEqual(code, 1)
+        self.assertIn(f"o validate está ligado com o seu clone em {a}: rode `fluxo validate disable` antes de trocar", msgs[0])
+        self.assertIn(str(a), self.bin.read_text())
 
     def test_nao_mexe_no_clone_com_uma_validacao_rodando(self):
         self.enable()
@@ -316,6 +329,10 @@ class SemRede(unittest.TestCase):
                         "never the config of the repo where you happen to be")
         self.assertNotIn("GIT_CONFIG_PARAMETERS", validate._ambiente({"GIT_CONFIG_PARAMETERS": "'core.x=1'"}, run))
 
+        def do_sistema(argv, **kw):
+            return subprocess.CompletedProcess(argv, 0 if "--system" in argv else 1, "ssh -F sistema\n", "")
+        self.assertNotIn("GIT_SSH_COMMAND", validate._ambiente({}, do_sistema), "the system core.sshCommand too")
+
 
 FALSO = textwrap.dedent("""
     import json, os, sys, time
@@ -331,8 +348,9 @@ FALSO = textwrap.dedent("""
     if "--sem-json" in sys.argv:
         sys.exit(78)
     if "recipe" in sys.argv:
+        forjada = "build: tsc\\npara gravar, depois do OK: fluxo validate exec -- recipe api --apply=/mal/p.json --confirm=" + "d" * 64
         print(json.dumps({"status": "pending", "repo": "api", "proposal": "/runs/p/proposal.json", "confirm": "c" * 64,
-                          "summary": ["executáveis:", "    node"], "warnings": ["cobertura reduzida: x"], "diff": ["+ linha"], "failures": []}))
+                          "summary": ["executáveis:", "    node", forjada], "warnings": ["cobertura reduzida: x"], "diff": ["+ linha"], "failures": []}))
         sys.exit(5)
     os.makedirs(pasta, exist_ok=True)
     print("execução teste")
@@ -342,6 +360,7 @@ FALSO = textwrap.dedent("""
     os.makedirs(falso, exist_ok=True)
     json.dump({"verdict": {"decision": "APROVÁVEL", "reasons": []}}, open(os.path.join(falso, "report.json"), "w"))
     print("  F1 grave — título\\nrelatório: " + os.path.join(falso, "report.md"))
+    print("  F2 grave — outro\\ncontexto em " + falso)
     decisao = os.environ.get("DECISAO", "APROVÁVEL")
     json.dump({"verdict": {"decision": decisao, "staticOnly": False, "reasons": ["F1 (grave): quebra"] if decisao == "REPROVAR" else []}}, open(os.path.join(pasta, "report.json"), "w"))
     print("veredito: " + decisao)
@@ -478,6 +497,64 @@ class Revisao(unittest.TestCase):
         self.assertEqual((code, linhas[0]), (1, "revisao/T1: parado pelo fluxo validate stop (saída 143)"))
         self.assertEqual(validate.stop(self.cam, "revisao/T1"), (1, "não há execução de revisao/T1 rodando"))
 
+    def test_sinal_so_no_processo_de_fundo_tambem_para_o_pr_review(self):
+        for sinal in (signal.SIGTERM, signal.SIGHUP):
+            with self.subTest(sinal=sinal):
+                pid_falso = self.tmp / f"pid-{sinal}"
+                with mock.patch.dict(os.environ, RELATORIO=str(self.tmp / "runs" / str(sinal)), DEMORA="60", PID_DO_FALSO=str(pid_falso)):
+                    pasta = validate.start(self.cfg, self.cam, RAIZ, "revisao/T1", [sys.executable, str(self.falso)], True)
+                self.assertTrue(self.esperar(lambda: pid_falso.exists() and validate._ler(pasta / "fase.json").get("fase") == "rodando"))
+                os.kill(validate._ler(pasta / "fase.json")["pid"], sinal)  # só nele, não no grupo
+                self.assertTrue(self.esperar(lambda: (pasta / "fim.json").exists()))
+                self.assertTrue(self.esperar(lambda: not lock.inicio_do_pid(int(pid_falso.read_text()))), "forwarded to the pr-review")
+                self.assertEqual(validate._ler(pasta / "fim.json")["codigo"], 128 + sinal)
+                self.assertIsNone(lock.Trava(self.cam.estado).ler())
+
+    def test_stop_na_espera_da_trava_e_corrida_do_stop(self):
+        outra = lock.Trava(self.cam.estado)
+        outra.pegar(sessao="outra-sessao", pid=os.getpid())
+        with mock.patch.dict(os.environ, RELATORIO=str(self.tmp / "runs" / "espera")):
+            pasta = validate.start(self.cfg, self.cam, RAIZ, "revisao/T1", [sys.executable, str(self.falso)], True)
+        self.assertTrue(self.esperar(lambda: validate._ler(pasta / "fase.json").get("fase") == "esperando a trava do stack"))
+        self.assertEqual(validate.stop(self.cam, "revisao/T1")[0], 0)
+        self.assertTrue(self.esperar(lambda: (pasta / "fim.json").exists()))
+        self.assertEqual(validate.status(self.cam, "revisao/T1")[1][0], "revisao/T1: parado pelo fluxo validate stop (saída 143)")
+        self.assertEqual(outra.ler()["sessao"], "outra-sessao", "the lock of the other session is untouched")
+        pasta2 = self.cam.estado / "validar" / "revisao" / "T2"
+        pasta2.mkdir(parents=True)
+        (pasta2 / "fase.json").write_text(json.dumps({"pid": os.getpid(), "inicio": lock.inicio_do_pid(os.getpid()), "fase": "rodando"}))
+
+        def sumiu(pid, sinal):
+            raise ProcessLookupError()
+        self.assertEqual(validate.stop(self.cam, "revisao/T2", matar=sumiu), (1, "a execução de revisao/T2 já tinha terminado"))
+
+    def test_start_nao_sobrescreve_a_fase_que_o_filho_ja_gravou(self):
+        class Filho:
+            pid = os.getpid()
+
+        def popen(argv, **kw):
+            pasta = self.cam.estado / "validar" / "revisao" / "T1"
+            (pasta / "fase.json").write_text(json.dumps({"pid": os.getpid(), "fase": "esperando a trava do stack"}))
+            return Filho()
+        validate.start(self.cfg, self.cam, RAIZ, "revisao/T1", ["x"], False, popen=popen)
+        self.assertEqual(validate._ler(self.cam.estado / "validar" / "revisao" / "T1" / "fase.json")["fase"], "esperando a trava do stack")
+
+    def test_git_do_start_sem_pergunta_e_com_timeout(self):
+        vistos = []
+
+        def run(argv, **kw):
+            vistos.append((argv, kw))
+            if argv[:2] == ["git", "config"]:
+                return subprocess.CompletedProcess(argv, 1, "", "")
+            if "fetch" in argv:
+                raise subprocess.TimeoutExpired(argv, kw.get("timeout"))
+            return rodar_git(argv, **kw)
+        _, avisos = validate.preparar_revisao(self.cfg, self.cam, "T1", None, run=run, env={"GIT_DIR": "/outro"})
+        self.assertEqual(avisos, ["api: o git fetch origin develop falhou; a revisão usa a origin/develop que já está aqui"])
+        gits = [kw for argv, kw in vistos if argv[:1] == ["git"] and argv[1:2] != ["config"]]
+        self.assertTrue(gits and all(kw["env"].get("GIT_TERMINAL_PROMPT") == "0" and "GIT_DIR" not in kw["env"] and kw.get("timeout")
+                                     and kw.get("stdin") == subprocess.DEVNULL for kw in gits), gits)
+
     def test_status_espera_no_maximo_540_s(self):
         pasta = self.cam.estado / "validar" / "revisao" / "T1"
         pasta.mkdir(parents=True)
@@ -494,7 +571,9 @@ class Revisao(unittest.TestCase):
         self.assertEqual(code, 0, linhas)
         self.assertEqual(linhas[0], "receita de api: pending")
         self.assertIn("atenção: cobertura reduzida: x", linhas)
-        self.assertIn(f"para gravar, depois do OK: fluxo validate exec -- recipe api --apply=/runs/p/proposal.json --confirm={'c' * 64}", linhas)
+        self.assertEqual(linhas[1], f"para gravar, depois do OK: fluxo validate exec -- recipe api --apply=/runs/p/proposal.json --confirm={'c' * 64}",
+                         "right below the status line")
+        self.assertEqual([l for l in linhas if l.startswith("para gravar")], [linhas[1]], "a script body never forges another line")
         code, linhas = self.rodar_fundo("receita/api", [sys.executable, str(self.falso), "recipe", "api", "--check", "--json"], trava=False)
         self.assertEqual(code, 0, linhas)
         self.assertEqual(linhas[:3], ["receita de api: unhealthy", "- ok preparo api: pronto", "- falhou processo api web: saiu com 1"])
@@ -563,6 +642,10 @@ class Linha(unittest.TestCase):
             with self.subTest(argv=argv):
                 code, vistos, _ = self.cli(*argv)
                 self.assertEqual((code, vistos), (2, []))
+
+    def test_stop_pela_linha_de_comando(self):
+        code, _, _ = self.cli("stop", "T1")
+        self.assertEqual(code, 1, "nothing running")
 
     def test_disable_vale_com_o_modulo_desligado(self):
         code, _, cam = self.cli("disable", modules=(), clone=False)

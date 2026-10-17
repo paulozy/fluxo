@@ -84,7 +84,7 @@ O `fluxo install` não usa rede. Quem traz o pr-reviewer é o `fluxo validate en
 
 - clona o pr-reviewer na tag que esta versão do fluxo fixa (em `lib/fluxo/validate.py`, com o sha do commit,
   que é conferido) em `~/.local/share/fluxo/pr-reviewer`, por HTTPS, com o seu acesso ao GitHub: o
-  `gh auth setup-git` libera o repo privado; com ssh, `git config --global url.git@github.com:.insteadOf https://github.com/`;
+  `gh auth setup-git` libera o repo privado; com ssh, `git config --global url.git@github.com:paulozy/.insteadOf https://github.com/paulozy/`;
 - cria `~/.config/pr-reviewer/config.json` só se não existir: `workspaceRoot` = `code_dir`, as bases do
   `git.base` e o perfil `local` (`--profile <nome>` troca);
 - cria o comando `~/.local/bin/pr-review` só se não houver um. As skills não dependem dele: usam
@@ -99,7 +99,7 @@ na config: o fluxo nunca mexe nele.
 - `fluxo validate start <id> [--backend B]` revisa a tarefa em segundo plano: um `--local` por repo do plano,
   na branch da worktree, com a base do plano. Com o módulo `lock`, o processo espera a trava do stack.
 - `fluxo validate start --recipe <repo> [--fix|--check]` escreve ou testa o runbook.
-- `fluxo validate status <id> [--wait 540]` (ou `--recipe <repo>`) acompanha: saída 75 é "ainda rodando", e no
+- `fluxo validate status <id> [--wait 100]` (ou `--recipe <repo>`) acompanha: saída 75 é "ainda rodando", e no
   fim a primeira linha é o veredito, lido do `report.json`. `fluxo validate stop <id>` cancela, e o pr-reviewer
   derruba o stack antes de sair.
 - `fluxo validate exec -- <args>` roda o pr-reviewer do clone (o `--apply` da receita vai por ele).

@@ -156,8 +156,8 @@ Os hooks e o `curses` da sua máquina decidem o que as abas mostram. O que a doc
 | V1 | `fluxo modules --enable validate && fluxo install` | o aviso "rode `fluxo validate enable`" | sem aviso: confira o módulo na config |
 | V2 | `fluxo validate enable` numa máquina com o `gh` logado | o clone na v0.5.0, a config do pr-reviewer e o comando `pr-review` | "Authentication failed" ou "could not read Username": `gh auth setup-git`; com ssh, o `insteadOf` do README e `ssh -T git@github.com` |
 | V3 | `fluxo doctor` | as linhas do node, do docker, do pr-reviewer e da config | node abaixo de 22.18: atualize; o `workspaceRoot` diferente do `code_dir`: acerte a config do pr-reviewer |
-| V4 | `/validar <id>` numa tarefa pequena, em cada ferramenta | o `start` em segundo plano e o `status --wait` até o veredito | a ferramenta mata o comando antes de 540 s: avise, para o `--wait` diminuir |
-| V5 | Codex: o `/validar` | pede a aprovação para rodar fora do sandbox | roda dentro e falha no docker ou na rede: avise |
+| V4 | `/validar <id>` numa tarefa pequena, em cada ferramenta | o `start` em segundo plano e o `status --wait 100` repetido até o veredito | a ferramenta mata o comando antes de 100 s (no Claude o padrão é 120 s): avise, para o `--wait` diminuir |
+| V5 | Codex: o `/validar` e o `/receita` | pedem a aprovação para rodar cada `fluxo validate` fora do sandbox (o `stop` também, no macOS) | rodam dentro e falham ao gravar no estado, no docker ou na rede: avise |
 | V6 | Copilot: o `/validar` | avisa que usa o backend da config do pr-reviewer, com custo | não avisa: corrija a skill |
 | V7 | `/receita <repo>` num repo sem runbook | mostra o resumo e o diff, pergunta, e só grava com o ok, pelo `--apply … --confirm=` | grava sem perguntar: pare e avise |
 

@@ -169,15 +169,18 @@ class Doctor(unittest.TestCase):
         self.assertIn((doctor.OK, "para conferir os agentes de verdade (custa): fluxo validate exec -- doctor"), r)
 
     def test_validate_node_velho_ou_ausente_e_falha(self):
-        self.assertIn((doctor.FALHA, "node v22.17.1: o pr-reviewer precisa do 22.18 ou mais novo"), self.validate("v22.17.1"))
-        self.assertIn((doctor.OK, "node v24.1.0"), self.validate("v24.1.0"))
-        self.assertIn((doctor.OK, "node v23.0.0"), self.validate("v23.0.0"), "a newer major with a lower minor")
+        falha = "o pr-reviewer precisa do 22.18+ (ou do 23.6+), que roda o .ts direto"
+        for v in ("v22.17.1", "v22.9.0", "v23.0.0", "v23.5.9", "v20.19.0"):
+            self.assertIn((doctor.FALHA, f"node {v}: {falha}"), self.validate(v), v)
+        for v in ("v22.18.0", "v22.100.0", "v23.6.0", "v24.1.0"):
+            self.assertIn((doctor.OK, f"node {v}"), self.validate(v), v)
+        self.assertTrue(any(n == doctor.AVISO and t.startswith("node --version não respondeu") for n, t in self.validate("lixo")))
         sem = self.validate(which=lambda b: None if b == "node" else f"/usr/bin/{b}")
         self.assertIn((doctor.FALHA, "node não está no PATH: o pr-reviewer roda em Node 22.18 ou mais novo"), sem)
 
     def test_validate_avisa_o_que_falta_trazer_ou_acertar(self):
         r = self.validate(which=lambda b: None if b == "docker" else f"/usr/bin/{b}")
-        self.assertIn((doctor.AVISO, "docker não está no PATH: o /validar fica só com a revisão estática"), r)
+        self.assertIn((doctor.AVISO, "docker não está no PATH: a validação fica só com a revisão estática"), r)
         self.assertIn((doctor.AVISO, "o pr-reviewer não foi trazido: rode `fluxo validate enable`"), r)
         self.assertTrue(any(n == doctor.AVISO and "não existe ou não é JSON" in t for n, t in r))
         velho = self.validate(estado={"dir": "x", "sha": "a" * 40}, head="b" * 40, conf={"workspaceRoot": "/outro"})
@@ -185,6 +188,20 @@ class Doctor(unittest.TestCase):
         self.assertTrue(any(n == doctor.AVISO and "o workspaceRoot do pr-reviewer (/outro) não é o code_dir" in t for n, t in velho))
         proprio = self.validate(estado={"dir": "/meu", "proprio": True}, conf={"workspaceRoot": str(self.home / "code")})
         self.assertIn((doctor.OK, "pr-reviewer: o seu clone em /meu"), proprio)
+        # o pr-reviewer não expande o ~ do workspaceRoot; a barra no fim não muda o caminho
+        til = self.validate(estado={"dir": "/meu", "proprio": True}, conf={"workspaceRoot": "~/code"})
+        self.assertTrue(any(n == doctor.AVISO and "em caminho absoluto" in t for n, t in til), til)
+        barra = self.validate(estado={"dir": "/meu", "proprio": True}, conf={"workspaceRoot": str(self.home / "code") + "/"})
+        self.assertNotIn(doctor.AVISO, [n for n, t in barra if "workspaceRoot" in t or "config do pr-reviewer" in t])
+        # o fluxo atualizou e falta o enable: o clone ainda no sha de antes, que o estado também registra
+        velho = self.validate(estado={"dir": "x", "sha": "a" * 40}, head="a" * 40)
+        self.assertTrue(any(n == doctor.AVISO and "não está na v" in t for n, t in velho), "compared with the pinned sha, not the recorded one")
+
+    def test_validate_desligado_nao_checa_nada(self):
+        cam = escrever_config(self.home, "claude")
+        r = doctor.checar(cam, RAIZ, cfg=config.carregar(cam, montar.modulos_existentes(RAIZ)), which=lambda b: f"/usr/bin/{b}",
+                          run=lambda *a, **k: Resp(0, "v22.18.0\n"), conectar=lambda *a: io.BytesIO(), versao=(3, 9), env={"PATH": ""})
+        self.assertFalse([t for _, t in r if "pr-reviewer" in t or t.startswith("node ") or t == "docker"])
 
     def test_sem_config_e_falha(self):
         cam = config.Caminhos(home=self.home)

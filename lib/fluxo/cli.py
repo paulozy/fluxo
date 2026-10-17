@@ -169,6 +169,7 @@ def cmd_validate(args, raiz):
     if args.acao == "exec":
         argv = validate.comando(cfg, cam, args.comando)
         os.execvp(argv[0], argv)
+        return 1  # o execvp só volta se falhar; nunca segue para outra ação
     if args.acao == "enable":
         code, msgs = validate.enable(cfg, cam, run=subprocess.run, profile=args.profile)
     else:

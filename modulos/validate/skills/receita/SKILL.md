@@ -19,7 +19,7 @@ O pedido: {{argumentos}}
 
 ```bash
 fluxo validate start --recipe <repo> --backend {{ferramenta.id}}
-fluxo validate status receita-<repo> --wait 540
+fluxo validate status --recipe <repo> --wait 540
 ```
 
 Saída 75 é "ainda rodando": rode o `status` de novo.
@@ -44,7 +44,7 @@ Sem o ok, pare aqui.
 
 ```bash
 fluxo validate start --recipe <repo> --check
-fluxo validate status receita-<repo> --wait 540
+fluxo validate status --recipe <repo> --wait 540
 ```
 <!-- se tool:codex -->
 

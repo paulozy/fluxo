@@ -18,7 +18,7 @@ O pedido: o texto que veio junto do pedido (se não veio nada, pergunte)
 
 ```bash
 fluxo validate start --recipe <repo> --backend codex
-fluxo validate status receita-<repo> --wait 540
+fluxo validate status --recipe <repo> --wait 540
 ```
 
 Saída 75 é "ainda rodando": rode o `status` de novo.
@@ -43,7 +43,7 @@ Sem o ok, pare aqui.
 
 ```bash
 fluxo validate start --recipe <repo> --check
-fluxo validate status receita-<repo> --wait 540
+fluxo validate status --recipe <repo> --wait 540
 ```
 
 O `--check` sobe containers: rode fora do sandbox, com a aprovação do usuário.

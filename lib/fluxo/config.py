@@ -167,8 +167,9 @@ def validar(cfg, modulos_existentes=()):
     else:
         out["validate"] = dict(PADRAO["validate"], **validate)
         pasta = out["validate"]["dir"]
-        if set(out["validate"]) != {"dir"} or not (pasta is None or (isinstance(pasta, str) and pasta.strip())):
-            problemas.append('validate.dir: a pasta de um clone seu do pr-reviewer, ou null para o fluxo clonar (ex.: "~/code/pr-reviewer-core")')
+        if set(out["validate"]) != {"dir"} or not (pasta is None or (isinstance(pasta, str) and pasta.strip()
+                                                                       and os.path.isabs(os.path.expanduser(pasta)))):
+            problemas.append('validate.dir: o caminho absoluto (ou com ~) de um clone seu do pr-reviewer, ou null para o fluxo clonar (ex.: "~/code/pr-reviewer-core")')
     if not _por_ferramenta(out.get("models"), lambda v: isinstance(v, dict) and all(
             k in NIVEIS and isinstance(n, str) for k, n in v.items())):
         problemas.append(f"models: {{ferramenta: {{{', '.join(NIVEIS)} → nome do modelo na ferramenta}}}}")

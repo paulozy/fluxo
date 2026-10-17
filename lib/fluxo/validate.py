@@ -2,14 +2,16 @@
 
 O `fluxo install` não usa rede: quem clona é o `fluxo validate enable` (como o `watch enable` e o `panel enable`),
 numa tag fixada por esta versão do fluxo, conferindo o sha do commit, porque uma tag pode ser movida. Um clone com
-mudança local nunca é descartado: o enable e o disable avisam e seguem. O clone é feito numa pasta irmã e troca de
-lugar no fim, porque o timeout mata o git com SIGKILL e deixaria a pasta pela metade.
+qualquer coisa sua (arquivo, commit, ref, reflog, worktree) nunca é descartado: o enable e o disable avisam e
+seguem. O clone é feito numa pasta irmã e troca de lugar no fim, porque o timeout mata o git com SIGKILL e deixaria
+a pasta pela metade.
 """
 import json
 import os
 import re
 import shlex
 import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -29,6 +31,12 @@ PR_REVIEWER = {
 ESTADO = "pr-reviewer.json"
 TIMEOUT = 300
 DICAS = "confira o acesso ao repo: `ssh -T git@github.com`, ou `gh auth setup-git` se você usa HTTPS"
+# o `git rev-parse --local-env-vars`: com uma delas herdada, o git falaria com outro repo
+GIT_LOCAIS = ("GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_CONFIG", "GIT_CONFIG_PARAMETERS", "GIT_CONFIG_COUNT",
+              "GIT_OBJECT_DIRECTORY", "GIT_DIR", "GIT_WORK_TREE", "GIT_IMPLICIT_WORK_TREE", "GIT_GRAFT_FILE",
+              "GIT_INDEX_FILE", "GIT_NO_REPLACE_OBJECTS", "GIT_REPLACE_REF_BASE", "GIT_PREFIX",
+              "GIT_INTERNAL_SUPER_PREFIX", "GIT_SHALLOW_FILE", "GIT_COMMON_DIR")
+PERFIL_RE = re.compile(r"^[A-Za-z0-9_-]+$")  # o pr-reviewer aceita só este formato (config.ts)
 
 
 class ErroClone(Exception):
@@ -54,21 +62,32 @@ def wrapper(clone):
             f'exec node {shlex.quote(str(clone / "bin" / "pr-review.ts"))} "$@"\n')
 
 
+def _e_nosso(bin_, clone):
+    """O comando pr-review é o que o enable criou para este clone (comparado byte a byte, sem seguir link)."""
+    try:
+        return bin_.is_file() and not bin_.is_symlink() and bin_.read_bytes() == wrapper(clone).encode()
+    except OSError:
+        return False
+
+
 def _ambiente(env, run):
     """Sem pergunta de senha, sem as variáveis de um repo de fora, e o ssh em modo não interativo quando você não
-    configurou um ssh próprio para o git."""
-    novo = {k: v for k, v in env.items() if k not in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE")}
+    configurou um ssh próprio para o git (na config global ou na do sistema, e não na do repo onde você está)."""
+    novo = {k: v for k, v in env.items() if k not in GIT_LOCAIS}
     novo.update(GIT_TERMINAL_PROMPT="0", GCM_INTERACTIVE="never")
     if "GIT_SSH_COMMAND" not in env:
-        proprio = run(["git", "config", "--get", "core.sshCommand"], capture_output=True, text=True, env=novo,
-                      stdin=subprocess.DEVNULL, timeout=30)
-        if proprio.returncode != 0 or not proprio.stdout.strip():
+        for escopo in ("--global", "--system"):
+            r = run(["git", "config", escopo, "--get", "core.sshCommand"], capture_output=True, text=True, env=novo,
+                    stdin=subprocess.DEVNULL, timeout=30)
+            if r.returncode == 0 and r.stdout.strip():
+                break
+        else:
             novo["GIT_SSH_COMMAND"] = "ssh -o BatchMode=yes -o ConnectTimeout=15"
     return novo
 
 
 def _git(run, env, args, cwd=None, timeout=TIMEOUT):
-    # o teto impede que o git suba para um repo de fora (um HOME versionado) se a pasta do clone perder o .git
+    # o teto impede que o git suba para um repo de fora (um HOME versionado) se a pasta perder o .git
     extra = {"GIT_CEILING_DIRECTORIES": str(Path(cwd).parent)} if cwd else {}
     return run(["git", *args], cwd=cwd, env=dict(env, **extra), stdin=subprocess.DEVNULL, capture_output=True,
                text=True, timeout=timeout)
@@ -80,8 +99,8 @@ def _fim(texto, linhas=6):
 
 def _ler(caminho):
     try:
-        dados = json.loads(caminho.read_text(encoding="utf-8"))
-    except (FileNotFoundError, ValueError):
+        dados = json.loads(Path(caminho).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
         return {}
     return dados if isinstance(dados, dict) else {}
 
@@ -93,9 +112,12 @@ def _gravar(caminho, dados):
     os.replace(tmp, caminho)
 
 
-def limpo(run, env, clone, sha):
-    """(limpo, motivo): no sha registrado, sem mudança (nem arquivo novo ou ignorado, que a troca apagaria), sem
-    branch local e sem stash, que o status não mostra."""
+def limpo(run, env, clone, sha, tag):
+    """(limpo, motivo). Limpo é exatamente o que um `clone --depth 1 --branch <tag>` deixa: o HEAD no sha, nenhum
+    arquivo mudado, novo ou ignorado (a troca apagaria), só a ref da tag (sem branch, stash ou tag sua), uma entrada
+    no reflog (um commit feito e abandonado só existe nele) e uma worktree só."""
+    if clone.is_symlink():
+        return False, "é um link"
     topo = _git(run, env, ["rev-parse", "--show-toplevel"], cwd=clone)
     if topo.returncode != 0 or Path(topo.stdout.strip()).resolve() != clone.resolve():
         return False, "não é um clone do git"
@@ -105,14 +127,22 @@ def limpo(run, env, clone, sha):
     status = _git(run, env, ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignored"], cwd=clone)
     if status.returncode != 0 or status.stdout.strip("\0"):
         return False, "tem arquivos mudados, novos ou ignorados"
-    refs = _git(run, env, ["for-each-ref", "--format=%(refname)", "refs/heads", "refs/stash"], cwd=clone)
-    if refs.returncode != 0 or refs.stdout.strip():
-        return False, "tem branch local ou stash"
+    refs = _git(run, env, ["for-each-ref", "--format=%(refname)"], cwd=clone)
+    if refs.returncode != 0 or refs.stdout.split() != [f"refs/tags/{tag}"]:
+        return False, "tem branch, stash ou tag que não é a do fluxo"
+    reflog = _git(run, env, ["reflog", "--format=%H", "HEAD"], cwd=clone)
+    if reflog.returncode != 0 or len(reflog.stdout.split()) != 1:
+        return False, "tem histórico de checkout no reflog (um commit seu pode estar só nele)"
+    worktrees = _git(run, env, ["worktree", "list", "--porcelain"], cwd=clone)
+    if worktrees.returncode != 0 or worktrees.stdout.count("worktree ") != 1:
+        return False, "tem outra worktree"
     return True, ""
 
 
 def clonar(run, env, fonte, clone):
     """Clona a tag numa pasta irmã, confere o sha e troca de lugar com o clone de antes, se houver."""
+    if clone.is_symlink():
+        raise ErroClone(f"{clone} é um link; não mexo nele")
     clone.parent.mkdir(parents=True, exist_ok=True)
     tmp = clone.with_name(f".{clone.name}.novo-{os.getpid()}")
     shutil.rmtree(tmp, ignore_errors=True)
@@ -165,15 +195,29 @@ def criar_config(cfg, cam, env, profile):
     return f"config do pr-reviewer mantida em {destino} (já existia)"
 
 
+def _alguma_rodando(cam):
+    raiz = cam.estado / "validar"
+    return [f"{p.parent.name}/{p.name}" for p in sorted(raiz.glob("*/*")) if _rodando(p)] if raiz.is_dir() else []
+
+
 def enable(cfg, cam, run=subprocess.run, env=None, fonte=None, profile="local"):
     """(código, mensagens)."""
     env = dict(os.environ if env is None else env)
     fonte = fonte or PR_REVIEWER
+    if not PERFIL_RE.fullmatch(profile or ""):
+        return 1, [f"perfil {profile!r} inválido: só letras, números, _ e - (o pr-reviewer recusa outro formato)"]
+    rodando = _alguma_rodando(cam)
+    if rodando:
+        return 1, [f"há uma validação rodando ({', '.join(rodando)}): espere ela terminar, ou fluxo validate stop"]
     clone = pasta(cfg, cam)
     estado_arq = cam.estado / ESTADO
     estado = _ler(estado_arq)
     msgs = []
     proprio = bool((cfg.get("validate") or {}).get("dir"))
+    # trocar entre o clone do fluxo e um seu passa pelo disable: o comando pr-review e o clone ficam com dono certo
+    if estado and bool(estado.get("proprio")) != proprio:
+        antes = "o seu clone em validate.dir" if estado.get("proprio") else f"o clone do fluxo em {estado.get('dir')}"
+        return 1, [f"o validate está ligado com {antes}: rode `fluxo validate disable` antes de trocar"]
     try:
         genv = _ambiente(env, run)
     except FileNotFoundError:
@@ -181,10 +225,12 @@ def enable(cfg, cam, run=subprocess.run, env=None, fonte=None, profile="local"):
     except subprocess.TimeoutExpired:
         return 1, ["o git não respondeu"]
     if proprio:
-        if not (clone / "bin" / "pr-review.ts").exists():
-            return 1, [f"validate.dir aponta para {clone}, que não tem bin/pr-review.ts"]
+        if not clone.is_absolute() or not (clone / "bin" / "pr-review.ts").is_file():
+            return 1, [f"validate.dir aponta para {clone}, que não é um caminho absoluto com bin/pr-review.ts"]
         msgs.append(f"usando o seu clone em {clone} (o fluxo nunca mexe nele)")
-        estado = {"dir": str(clone), "proprio": True}
+        estado = {"dir": str(clone), "proprio": True, "wrapper": estado.get("wrapper", False)}
+    elif clone.is_symlink():
+        return 1, [f"{clone} é um link; não mexo nele"]
     elif not clone.exists():
         try:
             clonar(run, genv, fonte, clone)
@@ -197,7 +243,7 @@ def enable(cfg, cam, run=subprocess.run, env=None, fonte=None, profile="local"):
     elif estado["sha"] == fonte["sha"]:
         msgs.append(f"pr-reviewer já está na {fonte['tag']} em {clone}")
     else:
-        ok, motivo = limpo(run, genv, clone, estado["sha"])
+        ok, motivo = limpo(run, genv, clone, estado["sha"], estado.get("tag", ""))
         if not ok:
             msgs.append(f"não atualizei {clone} para a {fonte['tag']}: o clone {motivo}; nada foi descartado")
         else:
@@ -213,7 +259,7 @@ def enable(cfg, cam, run=subprocess.run, env=None, fonte=None, profile="local"):
     if _criar_exclusivo(bin_, wrapper(clone), 0o755):
         estado["wrapper"] = True
         msgs.append(f"comando pr-review criado em {bin_}")
-    elif estado.get("wrapper") and bin_.is_file() and not bin_.is_symlink() and bin_.read_text(encoding="utf-8") == wrapper(clone):
+    elif estado.get("wrapper") and _e_nosso(bin_, clone):
         msgs.append(f"comando pr-review mantido em {bin_}")
     else:
         estado["wrapper"] = False
@@ -228,10 +274,13 @@ def disable(cfg, cam, run=subprocess.run, env=None):
     estado = _ler(estado_arq)
     if not estado:
         return 0, ["o validate não estava ligado nesta máquina"]
+    rodando = _alguma_rodando(cam)
+    if rodando:
+        return 1, [f"há uma validação rodando ({', '.join(rodando)}): espere ela terminar, ou fluxo validate stop"]
     clone = Path(estado["dir"])
     msgs = []
     bin_ = cam.home / ".local" / "bin" / "pr-review"
-    if estado.get("wrapper") and bin_.is_file() and not bin_.is_symlink() and bin_.read_text(encoding="utf-8") == wrapper(clone):
+    if estado.get("wrapper") and _e_nosso(bin_, clone):
         bin_.unlink()
         msgs.append(f"comando pr-review removido de {bin_}")
     elif estado.get("wrapper"):
@@ -239,15 +288,16 @@ def disable(cfg, cam, run=subprocess.run, env=None):
     tira_estado = True
     if estado.get("proprio"):
         msgs.append(f"o seu clone em {clone} fica (o fluxo nunca mexe nele)")
-    elif clone.exists():
+    elif clone.exists() or clone.is_symlink():
         try:
-            ok, motivo = limpo(run, _ambiente(env, run), clone, estado.get("sha", ""))
+            ok, motivo = limpo(run, _ambiente(env, run), clone, estado.get("sha", ""), estado.get("tag", ""))
         except (FileNotFoundError, subprocess.TimeoutExpired):
             ok, motivo = False, "não deu para conferir (sem git)"
         if ok:
             shutil.rmtree(clone)
             msgs.append(f"clone do pr-reviewer removido de {clone}")
         else:
+            # o estado fica: é ele que diz ao próximo enable que o clone é do fluxo
             tira_estado = False
             msgs.append(f"o clone em {clone} {motivo}; ficou como está")
     if tira_estado:
@@ -280,41 +330,49 @@ def avisos_do_uninstall(cam):
 # ── a revisão e a receita em segundo plano ───────────────────────────────────
 #
 # Uma revisão leva de 4 a 20 min, e o comando da ferramenta tem limite de tempo (no Claude, 10 min); o timeout
-# mata o que ela rodou. Por isso o `start` solta um processo desligado da sessão, que pega a trava do stack com o
-# próprio pid (ela vale enquanto ele vive) e grava o fim; o `status` acompanha. A trava ocupada nunca se confunde
-# com a saída 4 do pr-review, que é REPROVAR.
+# mata o que ela rodou. Por isso o `start` solta um processo desligado da sessão (líder do próprio grupo), que pega
+# a trava do stack com o próprio pid (ela vale enquanto ele vive), roda o pr-review, repassa um SIGTERM a ele e só
+# solta a trava depois que ele termina. O `status` acompanha e o `stop` cancela o grupo inteiro. A trava ocupada
+# nunca se confunde com a saída 4 do pr-review, que é REPROVAR.
 
 SEM_ADAPTADOR = {"copilot"}  # o pr-reviewer ainda não roda os agentes nela: vale o backend da config dele
 ESPERA = 3600
-CHAVE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,60}$")
+TIPOS = ("revisao", "receita")
+NOME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,60}$")
+REPO_RE = re.compile(r"^(?!\.{1,2}$)[A-Za-z0-9_.-]+$")  # o mesmo do --local do pr-reviewer (cli.ts), em ASCII
 
 
-def _pasta_execucao(cam, chave):
-    return cam.estado / "validar" / chave
+def chave(tipo, nome):
+    """`revisao/<id>` ou `receita/<repo>`: uma tarefa chamada receita-x não colide com a receita do repo x."""
+    if tipo not in TIPOS or not NOME_RE.fullmatch(nome or ""):
+        raise cfgmod.ErroConfig(f"{tipo} {nome!r} inválido")
+    return f"{tipo}/{nome}"
 
 
-def _vivo(pid):
-    try:
-        os.kill(int(pid), 0)
-    except PermissionError:
-        return True
-    except (OSError, ValueError, TypeError):
-        return False
-    return True
+def _pasta_execucao(cam, ch):
+    tipo, _, nome = ch.partition("/")
+    chave(tipo, nome)  # valida: um `_rodar ../../x` nunca acha outro pedido.json
+    return cam.estado / "validar" / tipo / nome
 
 
 def _rodando(pasta):
+    """O processo da fase vive, e é o mesmo (a hora de início confere: um pid reaproveitado depois de um reboot
+    não conta)."""
     fase = _ler(pasta / "fase.json")
-    return bool(fase.get("pid")) and not (pasta / "fim.json").exists() and _vivo(fase["pid"])
+    pid = fase.get("pid")
+    if not pid or (pasta / "fim.json").exists():
+        return False
+    agora = lock.inicio_do_pid(pid)
+    return agora is not None and (not fase.get("inicio") or not agora or agora == fase["inicio"])
 
 
 def _backend(backend):
     return [] if not backend or backend in SEM_ADAPTADOR else ["--backend", backend]
 
 
-def preparar_revisao(cfg, cam, id_, backend, run=subprocess.run):
+def preparar_revisao(cfg, cam, id_, backend, run=subprocess.run, env=None):
     """O argv do pr-review para a tarefa: um --local por repo do plano, na branch da worktree, e a base do plano."""
-    if not ID_RE.fullmatch(id_):
+    if not ID_RE.fullmatch(id_ or ""):
         raise cfgmod.ErroConfig(f"id {id_!r} inválido")
     plano = cam.dados / "planos" / f"{id_}.md"
     try:
@@ -324,23 +382,35 @@ def preparar_revisao(cfg, cam, id_, backend, run=subprocess.run):
     repos = meta.get("repos")
     if isinstance(repos, str):
         repos = [repos]
-    if not isinstance(repos, list) or not repos or not all(isinstance(r, str) and re.fullmatch(r"[\w.-]+", r) for r in repos):
-        raise cfgmod.ErroConfig(f"{plano}: o frontmatter precisa de repos: [repo, ...]")
+    if not isinstance(repos, list) or not repos or not all(isinstance(r, str) and REPO_RE.fullmatch(r) for r in repos):
+        raise cfgmod.ErroConfig(f"{plano}: o frontmatter precisa de repos: [repo, ...], com nomes de repo")
+    # a base vem do plano (texto que o agente escreve): o formato de branch impede que ela vire opção do git
     base = meta.get("base") or cfg["git"]["base"]
     if not isinstance(base, str) or not cfgmod.BRANCH.fullmatch(base):
         raise cfgmod.ErroConfig(f"{plano}: base {base!r} inválida")
+    try:
+        genv = _ambiente(dict(os.environ if env is None else env), run)
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        raise cfgmod.ErroConfig("sem git nesta máquina") from None
     locais, avisos = [], []
     for repo in repos:
         wt = Path(os.path.expanduser(cfg["code_dir"])) / f"{repo}-{id_}"
         if not wt.is_dir():
             raise cfgmod.ErroConfig(f"a worktree {wt} não existe")
-        branch = run(["git", "-C", str(wt), "branch", "--show-current"], capture_output=True, text=True).stdout.strip()
+        try:
+            branch = _git(run, genv, ["branch", "--show-current"], cwd=wt, timeout=30).stdout.strip()
+            sujo = _git(run, genv, ["status", "--porcelain"], cwd=wt, timeout=60).stdout.strip()
+        except subprocess.TimeoutExpired:
+            raise cfgmod.ErroConfig(f"o git não respondeu em {wt}") from None
         if not branch:
             raise cfgmod.ErroConfig(f"{wt} não está numa branch")
-        sujo = run(["git", "-C", str(wt), "status", "--porcelain"], capture_output=True, text=True).stdout.strip()
         if sujo:
             raise cfgmod.ErroConfig(f"{wt} tem mudança não commitada; o pr-review só vê o que está commitado: commite antes")
-        if run(["git", "-C", str(wt), "fetch", "-q", "origin", base], capture_output=True, text=True).returncode != 0:
+        try:
+            buscou = _git(run, genv, ["fetch", "-q", "origin", base], cwd=wt, timeout=120).returncode == 0
+        except subprocess.TimeoutExpired:
+            buscou = False
+        if not buscou:
             avisos.append(f"{repo}: o git fetch origin {base} falhou; a revisão usa a origin/{base} que já está aqui")
         locais += ["--local", f"{repo}:{branch}"]
     argv = comando(cfg, cam, [*locais, "--base", f"origin/{base}", "--plan", str(plano), *_backend(backend)])
@@ -348,72 +418,98 @@ def preparar_revisao(cfg, cam, id_, backend, run=subprocess.run):
 
 
 def preparar_receita(cfg, cam, repo, modo, backend):
-    if not re.fullmatch(r"[\w-]+", repo):
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", repo or ""):
         raise cfgmod.ErroConfig(f"nome de repo inválido: {repo!r}")
     extra = {"proposta": [], "fix": ["--fix"], "check": ["--check"]}[modo]
     # o --check não roda agente, e o pr-review recusa --backend com ele
     return comando(cfg, cam, ["recipe", repo, *extra, "--json", *([] if modo == "check" else _backend(backend))])
 
 
-def start(cfg, cam, raiz, chave, argv, trava, id_=None, popen=subprocess.Popen, espera=ESPERA):
+def start(cfg, cam, raiz, ch, argv, trava, id_=None, popen=subprocess.Popen, espera=ESPERA):
     """Solta o processo que roda o pr-review desligado da sessão. Devolve a pasta da execução."""
-    if not CHAVE_RE.fullmatch(chave):
-        raise cfgmod.ErroConfig(f"chave {chave!r} inválida")
-    pasta = _pasta_execucao(cam, chave)
+    pasta = _pasta_execucao(cam, ch)
     if _rodando(pasta):
-        raise cfgmod.ErroConfig(f"já há uma execução de {chave} rodando: fluxo validate status {chave}")
+        raise cfgmod.ErroConfig(f"já há uma execução de {ch} rodando: fluxo validate status")
     cfgmod.criar_estado(cam.estado)
     shutil.rmtree(pasta, ignore_errors=True)
     pasta.mkdir(parents=True, mode=0o700)
-    _gravar(pasta / "pedido.json", {"argv": argv, "trava": trava, "id": id_ or chave, "espera": espera,
+    _gravar(pasta / "pedido.json", {"argv": argv, "trava": trava, "id": id_ or ch, "espera": espera,
                                     "criado": time.strftime("%Y-%m-%d %H:%M:%S")})
     home = ["--home", str(cam.home)] if cam.home != Path.home() else []
     with open(pasta / "saida.log", "wb") as out, open(pasta / "erros.log", "wb") as err:
-        proc = popen([sys.executable, str(Path(raiz) / "fluxo"), "validate", "_rodar", chave, *home],
+        proc = popen([sys.executable, str(Path(raiz) / "fluxo"), "validate", "_rodar", ch, *home],
                      stdin=subprocess.DEVNULL, stdout=out, stderr=err, start_new_session=True)
-    # já com o pid: até o processo gravar a fase dele, o status o daria por morto
-    _gravar(pasta / "fase.json", {"fase": "começando", "pid": proc.pid})
+    # já com o pid: até o processo gravar a fase dele, o status o daria por morto. Só cria: se o filho ganhou a
+    # corrida, a fase dele vale
+    _criar_exclusivo(pasta / "fase.json", json.dumps({"fase": "começando", "pid": proc.pid,
+                                                      "inicio": lock.inicio_do_pid(proc.pid)}), 0o600)
     return pasta
 
 
-def rodar(cam, chave, run=subprocess.run):
-    """O processo de fundo: pega a trava (se pedido) com o próprio pid, roda o pr-review e grava o fim."""
-    pasta = _pasta_execucao(cam, chave)
+def rodar(cam, ch, popen=subprocess.Popen):
+    """O processo de fundo: pega a trava (se pedido) com o próprio pid, roda o pr-review e grava o fim. Um SIGTERM
+    ou SIGHUP é repassado ao pr-review, e a trava só sai depois que ele termina."""
+    pasta = _pasta_execucao(cam, ch)
     pedido = _ler(pasta / "pedido.json")
-    sessao = f"validar-{chave}"
+    eu = {"pid": os.getpid(), "inicio": lock.inicio_do_pid(os.getpid())}
+    sessao = f"validar-{ch.replace('/', '-')}"
     t = lock.Trava(cam.estado) if pedido.get("trava") else None
     if t:
-        _gravar(pasta / "fase.json", {"fase": "esperando a trava do stack", "pid": os.getpid()})
+        _gravar(pasta / "fase.json", dict(eu, fase="esperando a trava do stack"))
         ok, dono, _ = lock.pegar_esperando(t, int(pedido.get("espera", ESPERA)), sessao=sessao, pid=os.getpid(), id_=pedido.get("id"))
         if not ok:
             _gravar(pasta / "fim.json", {"ocupada": lock.descrever(dono, True)})
             return lock.OCUPADA
+    recebido, proc = [], None
+
+    def repassar(sinal, _frame):
+        recebido.append(sinal)
+        if proc is not None and proc.poll() is None:
+            proc.send_signal(sinal)
+
+    antigos = {s: signal.signal(s, repassar) for s in (signal.SIGTERM, signal.SIGHUP)}
     try:
-        _gravar(pasta / "fase.json", {"fase": "rodando", "pid": os.getpid()})
-        codigo = run(pedido["argv"], stdin=subprocess.DEVNULL).returncode
-        _gravar(pasta / "fim.json", {"codigo": codigo, "terminado": time.strftime("%Y-%m-%d %H:%M:%S")})
+        _gravar(pasta / "fase.json", dict(eu, fase="rodando"))
+        proc = popen(pedido["argv"], stdin=subprocess.DEVNULL)
+        codigo = proc.wait()  # o wait é retomado depois do handler
+        codigo = 128 + recebido[0] if recebido else codigo
+        _gravar(pasta / "fim.json", {"codigo": codigo, "terminado": time.strftime("%Y-%m-%d %H:%M:%S"),
+                                     **({"parado": True} if recebido else {})})
         return codigo
     finally:
+        for s, h in antigos.items():
+            signal.signal(s, h)
         if t:
             t.soltar(sessao)
 
 
+def stop(cam, ch, matar=os.killpg):
+    """Cancela a execução: um SIGTERM ao grupo do processo de fundo, que o repassa ao pr-review e solta a trava."""
+    pasta = _pasta_execucao(cam, ch)
+    if not _rodando(pasta):
+        return 1, f"não há execução de {ch} rodando"
+    pid = _ler(pasta / "fase.json")["pid"]
+    try:
+        matar(int(pid), signal.SIGTERM)
+    except ProcessLookupError:
+        return 1, f"a execução de {ch} já tinha terminado"
+    return 0, f"{ch}: pedi para parar (o pr-review derruba o stack antes de sair)"
+
+
 def _relatorio(pasta):
-    """O report.json da revisão: a linha `relatório: <pasta>/report.md` que o pr-review imprime no fim."""
-    for nome in ("saida.log", "erros.log"):
-        texto = (pasta / nome).read_text(encoding="utf-8", errors="replace") if (pasta / nome).exists() else ""
-        m = re.search(r"^relatório: (.+)/report\.md$", texto, re.M)
-        if m:
-            return Path(m.group(1)) / "report.json"
-    return None
+    """O report.json da revisão: a pasta da linha `contexto em <pasta>`, que o pr-review imprime no começo, antes de
+    qualquer texto de terceiro (um título de achado com quebra de linha forjaria uma linha `relatório:`)."""
+    texto = (pasta / "saida.log").read_text(encoding="utf-8", errors="replace") if (pasta / "saida.log").exists() else ""
+    m = re.search(r"^contexto em (/.+)$", texto, re.M)
+    return Path(m.group(1)) / "report.json" if m else None
 
 
-def status(cam, chave, esperar=0, dormir=time.sleep, relogio=time.monotonic):
-    """(código, linhas): 0 terminou, 75 ainda rodando, 1 não há execução ou ela falhou sem resultado."""
-    pasta = _pasta_execucao(cam, chave)
+def status(cam, ch, esperar=0, dormir=time.sleep, relogio=time.monotonic):
+    """(código, linhas): 0 terminou, 75 ainda rodando, 1 não há execução ou ela não deu resultado."""
+    pasta = _pasta_execucao(cam, ch)
     pedido = _ler(pasta / "pedido.json")
     if not pedido:
-        return 1, [f"não há execução de {chave}: fluxo validate start {chave}"]
+        return 1, [f"não há execução de {ch}"]
     fim_em = relogio() + max(0, min(esperar, 540))
     while not (pasta / "fim.json").exists() and _rodando(pasta) and relogio() < fim_em:
         dormir(min(5, max(0.5, fim_em - relogio())))
@@ -421,16 +517,18 @@ def status(cam, chave, esperar=0, dormir=time.sleep, relogio=time.monotonic):
     logs = f"logs: {pasta / 'saida.log'} e {pasta / 'erros.log'}"
     if not fim:
         if _rodando(pasta):
-            return 75, [f"{chave}: {_ler(pasta / 'fase.json').get('fase', 'rodando')} (desde {pedido.get('criado')})", logs]
-        return 1, [f"{chave}: o processo terminou sem registrar o fim", logs]
+            return 75, [f"{ch}: {_ler(pasta / 'fase.json').get('fase', 'rodando')} (desde {pedido.get('criado')})", logs]
+        return 1, [f"{ch}: o processo terminou sem registrar o fim", logs]
     if "ocupada" in fim:
-        return 1, [f"{chave}: a trava do stack continuou ocupada ({fim['ocupada']}); rode de novo quando ela soltar", logs]
-    if "recipe" in pedido["argv"]:
-        return 0, _resumo_receita(pasta, fim, logs)
+        return 1, [f"{ch}: a trava do stack continuou ocupada ({fim['ocupada']}); rode de novo quando ela soltar", logs]
+    if fim.get("parado"):
+        return 1, [f"{ch}: parado pelo fluxo validate stop (saída {fim['codigo']})", logs]
+    if ch.startswith("receita/"):
+        return _resumo_receita(pasta, fim, logs)
     report = _relatorio(pasta)
     dados = _ler(report) if report else {}
     if not dados:
-        return 1, [f"{chave}: o pr-review saiu com {fim['codigo']} sem relatório", logs]
+        return 1, [f"{ch}: o pr-review saiu com {fim['codigo']} sem relatório", logs]
     veredito = dados.get("verdict") or {}
     linhas = [f"veredito: {veredito.get('decision', '?')}{' (só estática)' if veredito.get('staticOnly') else ''}"]
     linhas += [f"- {r}" for r in veredito.get("reasons") or []]
@@ -442,19 +540,21 @@ def _resumo_receita(pasta, fim, logs):
     try:
         r = json.loads((pasta / "saida.log").read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        return [f"o recipe saiu com {fim['codigo']} sem o JSON", logs]
+        return 1, [f"o recipe saiu com {fim['codigo']} sem o JSON", logs]
     linhas = [f"receita de {r.get('repo')}: {r.get('status')}"]
     if r.get("status") in ("healthy", "unhealthy"):
-        linhas += [f"- {'ok' if st.get('ok') else 'falhou'} {st.get('phase')} {st.get('name')}: {(st.get('detail') or '').splitlines()[0] if st.get('detail') else ''}"
-                   for st in r.get("steps") or []]
-        return linhas + [logs]
+        for st in r.get("steps") or []:
+            detalhe = (st.get("detail") or "").splitlines()
+            linhas.append(f"- {'ok' if st.get('ok') else 'falhou'} {st.get('phase')} {st.get('name')}: {detalhe[0] if detalhe else ''}")
+        return 0, linhas + [logs]
     linhas += r.get("summary") or []
     linhas += [f"atenção: {w}" for w in r.get("warnings") or []]
     linhas += r.get("diff") or []
     linhas += r.get("failures") or []
     if r.get("status") == "pending":
-        linhas.append(f"para gravar, depois do OK: fluxo validate exec -- recipe {r.get('repo')} --apply={r.get('proposal')} --confirm={r.get('confirm')}")
-    return linhas + [logs]
+        linhas.append(f"para gravar, depois do OK: fluxo validate exec -- recipe {shlex.quote(str(r.get('repo')))} "
+                      f"--apply={shlex.quote(str(r.get('proposal')))} --confirm={shlex.quote(str(r.get('confirm')))}")
+    return 0, linhas + [logs]
 
 
 # ── doctor ───────────────────────────────────────────────────────────────────

@@ -42,6 +42,8 @@ fluxo validate status <id> --wait 540
   `relatório:`.
 - **Saída 1:** não rodou (a trava continuou ocupada, ou o processo caiu). Mostre as linhas ao usuário.
 
+Para cancelar uma revisão que não serve mais: `fluxo validate stop <id>`. Ela derruba o stack antes de sair.
+
 ## 4. O que fazer com o veredito
 
 - **APROVÁVEL:** siga.

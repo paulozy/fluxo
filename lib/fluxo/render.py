@@ -1,7 +1,8 @@
 """Template das fontes: variáveis `{{a.b}}` e blocos `<!-- se eixo:valor -->…<!-- senao -->…<!-- fim -->`.
 
 Estrito de propósito: variável, eixo ou valor desconhecido é erro, para um texto não sair para a
-ferramenta com `{{forge.pr}}` cru ou com o bloco errado. Os blocos não se aninham.
+ferramenta com `{{forge.pr}}` cru ou com o bloco errado. Os blocos não se aninham; uma condição pode juntar
+termos com ` e ` (`module:reviewer e nao module:validate`), e todos têm de valer.
 """
 import re
 
@@ -40,6 +41,11 @@ def condicao(texto, eixos, valores_validos, onde="?"):
     return vale != negar
 
 
+def condicoes(texto, eixos, valores_validos, onde="?"):
+    """Os termos unidos por ` e ` (`module:reviewer e nao module:validate`) têm de valer todos."""
+    return all([condicao(termo, eixos, valores_validos, onde) for termo in re.split(r"\s+e\s+", texto.strip())])
+
+
 def _var(nome, contexto, onde):
     atual = contexto
     for parte in nome.split("."):
@@ -59,7 +65,7 @@ def renderizar(texto, contexto, eixos, valores_validos, onde="?"):
         dentro = (m.group("sim") or "") + (m.group("nao") or "")
         if MARCA.search(dentro):
             raise ErroTemplate(f"{onde}: bloco aninhado em <!-- se {m.group('cond')} -->")
-        return m.group("sim") if condicao(m.group("cond"), eixos, valores_validos, onde) else (m.group("nao") or "")
+        return m.group("sim") if condicoes(m.group("cond"), eixos, valores_validos, onde) else (m.group("nao") or "")
 
     saida = BLOCO.sub(bloco, texto)
     sobra = MARCA.search(saida)

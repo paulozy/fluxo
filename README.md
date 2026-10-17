@@ -203,7 +203,8 @@ FLUXO_ATUALIZAR_ESPERADO=1 python3 -m unittest discover -s tests -p test_install
   - `lib/fluxo/` é o código;
   - `modulos/` recebe os módulos das próximas fases.
 - **Template das fontes:** `{{forge.pr}}`, `{{git.base}}`, `{{codigo_dir}}`, `{{dados}}`,
-  `{{argumentos}}` e `{{pergunte}}`, mais blocos `<!-- se forge:gitlab -->…<!-- senao -->…<!-- fim -->`.
+  `{{argumentos}}` e `{{pergunte}}`, mais blocos `<!-- se forge:gitlab -->…<!-- senao -->…<!-- fim -->`. Uma condição
+  junta termos com ` e ` (`<!-- se module:reviewer e nao module:validate -->`), e todos têm de valer.
   Variável ou condição desconhecida é erro.
 - **Agentes:** frontmatter com `tools: [read, search, edit, shell, web, agent]` e
   `model: strong|medium|light`. A tradução para cada ferramenta fica em `adaptadores/ferramenta/`.

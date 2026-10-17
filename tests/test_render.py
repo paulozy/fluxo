@@ -34,6 +34,16 @@ class Template(unittest.TestCase):
                          "task\n")
         self.assertEqual(r("  <!-- se forge:gitlab -->\n  indentado\n  <!-- fim -->\n"), "  indentado\n")
 
+    def test_condicao_com_e(self):
+        """Todos os termos têm de valer; um inválido é erro mesmo quando outro já decidiu."""
+        self.assertEqual(r("<!-- se module:task e nao module:watch -->\nso task\n<!-- fim -->\n"), "so task\n")
+        self.assertEqual(r("<!-- se module:task e module:watch -->\nos dois\n<!-- senao -->\nfalta um\n<!-- fim -->\n"), "falta um\n")
+        self.assertEqual(r("<!-- se forge:gitlab e os:mac e chat:draft -->\ntres\n<!-- fim -->\n"), "tres\n")
+        self.assertEqual(r("<!-- se nao forge:gitlab e os:mac -->\nx\n<!-- senao -->\ny\n<!-- fim -->\n"), "y\n", "o nao vale só para o seu termo")
+        for cond in ("module:task e", "module:task e cor:azul", "forge:github e module:panel", "e module:task"):
+            with self.subTest(cond=cond), self.assertRaises(render.ErroTemplate):
+                r(f"<!-- se {cond} -->\nx\n<!-- fim -->\n")
+
     def test_marcadores_com_outra_grafia(self):
         self.assertEqual(r("<!--se forge:gitlab-->\nx\n<!--senao-->\ny\n<!--fim-->\n"), "x\n")
         self.assertEqual(r("<!--  SE forge:github  -->\nx\n<!-- Fim -->\n"), "")

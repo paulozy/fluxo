@@ -30,6 +30,7 @@ PADRAO = {
     "task": {"max": 2, "launch": {}},
     "watch": {"interval": 300},
     "promote": {"targets": ["main"]},  # as bases depois da git.base, em ordem (ex.: staging, main)
+    "validate": {"dir": None},  # um clone seu do pr-reviewer, que o fluxo usa sem mexer; sem ele, o fluxo clona
 }
 
 
@@ -160,6 +161,14 @@ def validar(cfg, modulos_existentes=()):
             problemas.append('promote.targets: lista de nomes de branch, em ordem, sem repetir (ex.: ["staging", "main"])')
         elif ligado and (out.get("git") or {}).get("base") in alvos:
             problemas.append("promote.targets não pode incluir a própria git.base")
+    validate = out.get("validate")
+    if not isinstance(validate, dict):
+        problemas.append("validate precisa ser um objeto")
+    else:
+        out["validate"] = dict(PADRAO["validate"], **validate)
+        pasta = out["validate"]["dir"]
+        if set(out["validate"]) != {"dir"} or not (pasta is None or (isinstance(pasta, str) and pasta.strip())):
+            problemas.append('validate.dir: a pasta de um clone seu do pr-reviewer, ou null para o fluxo clonar (ex.: "~/code/pr-reviewer-core")')
     if not _por_ferramenta(out.get("models"), lambda v: isinstance(v, dict) and all(
             k in NIVEIS and isinstance(n, str) for k, n in v.items())):
         problemas.append(f"models: {{ferramenta: {{{', '.join(NIVEIS)} → nome do modelo na ferramenta}}}}")

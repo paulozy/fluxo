@@ -12,7 +12,7 @@ import sys
 from pathlib import Path
 
 from . import config as cfgmod
-from . import doctor, empacotar, fonte, instalar, lock, messages, montar, panel, render, task, varredura, vistas, watch
+from . import doctor, empacotar, fonte, instalar, lock, messages, montar, panel, render, task, validate, varredura, vistas, watch
 
 ERROS_DE_USO = (cfgmod.ErroConfig, montar.ErroMontagem, render.ErroTemplate, fonte.ErroFonte)
 
@@ -163,6 +163,21 @@ def cmd_watch(args, raiz):
     return code
 
 
+def cmd_validate(args, raiz):
+    # o disable vale com o módulo desligado: é o que tira o clone depois de desligá-lo
+    cam, cfg = _carregar(args, raiz, None if args.acao == "disable" else "validate")
+    if args.acao == "exec":
+        argv = validate.comando(cfg, cam, args.comando)
+        os.execvp(argv[0], argv)
+    if args.acao == "enable":
+        code, msgs = validate.enable(cfg, cam, run=subprocess.run, profile=args.profile)
+    else:
+        code, msgs = validate.disable(cfg, cam, run=subprocess.run)
+    for m in msgs:
+        print(m, file=sys.stderr if code else sys.stdout)
+    return code
+
+
 def cmd_hook(args, raiz):
     """Chamado pela ferramenta em cada evento: não lê a config (que pode estar quebrada), nunca imprime,
     sempre sai com 0."""
@@ -205,7 +220,7 @@ def cmd_init(args, raiz):
     cfg = {"version": 1, "tools": tools, "forge": args.forge, "tracker": args.tracker,
            "chat": args.chat, "os": args.os or cfgmod.detectar_so(), "modules": [],
            "git": {"base": args.base}, "code_dir": args.code_dir, "models": {}}
-    for chave in ("modules", "models", "task", "watch", "promote"):
+    for chave in ("modules", "models", "task", "watch", "promote", "validate"):
         if isinstance(anterior, dict) and chave in anterior:
             cfg[chave] = anterior[chave]
     if "kiro" in tools:
@@ -235,6 +250,7 @@ def _montar(args, raiz):
 def cmd_install(args, raiz):
     cam, cfg, arquivos, avisos = _montar(args, raiz)
     acoes = instalar.planejar(arquivos, instalar.ler_manifesto(cam.manifesto), cam.home)
+    avisos += validate.avisos_do_install(cfg, cam)
     avisos += panel.avisos_do_install({a.rel for a in acoes if a.tipo == instalar.REMOVER}, cam,
                                       {a.rel for a in acoes if a.tipo in (instalar.CRIAR, instalar.ATUALIZAR)
                                        or (a.tipo == instalar.CONFLITO and args.force)})
@@ -260,6 +276,8 @@ def cmd_install(args, raiz):
 def cmd_uninstall(args, raiz):
     cam = _caminhos(args)
     acoes = instalar.planejar_remocao(instalar.ler_manifesto(cam.manifesto), cam.home)
+    for a in validate.avisos_do_uninstall(cam):
+        print(f"aviso: {a}")
     print(f"fluxo uninstall em {cam.home}:")
     print(instalar.resumo(acoes))
     if args.dry_run:
@@ -381,6 +399,11 @@ def parser():
     p.add_argument("--target", help="enable no WSL: sessão do tmux onde abrir a janela do watch")
     p.set_defaults(fn=cmd_watch)
 
+    p = sub.add_parser("validate", help="o pr-reviewer (módulo validate): enable clona, disable tira, exec roda")
+    p.add_argument("acao", choices=("enable", "disable", "exec"))
+    p.add_argument("--profile", default="local", help="enable: o perfil da config do pr-reviewer que ele cria (padrão: local)")
+    p.set_defaults(fn=cmd_validate)
+
     p = sub.add_parser("hook", help="(chamado pelas ferramentas) grava um evento para o painel")
     p.add_argument("--tool", required=True)
     p.add_argument("--event", default="")
@@ -399,7 +422,7 @@ def parser():
     p.add_argument("--hash", metavar="TERM", help="só imprime o hash do termo, para o tests/proibidos.sha256")
     p.set_defaults(fn=cmd_scan)
 
-    for nome in ("init", "install", "uninstall", "doctor", "modules", "task", "msg", "lock", "watch", "hook", "panel"):
+    for nome in ("init", "install", "uninstall", "doctor", "modules", "task", "msg", "lock", "watch", "hook", "panel", "validate"):
         sub.choices[nome].add_argument("--home", help="usa esta pasta no lugar do HOME para config, dados e "
                                        "arquivos instalados (teste); o tmux e o ~ do code_dir continuam os reais")
     return ap
@@ -421,7 +444,7 @@ def main(argv, raiz):
     argv, comando = list(argv), []
     if argv[:1] == ["hook"]:
         return _hook(argv, raiz)
-    if argv[:2] == ["lock", "run"] and "--" in argv:  # `fluxo lock run --id X -- docker compose up`
+    if argv[:2] in (["lock", "run"], ["validate", "exec"]) and "--" in argv:  # `fluxo lock run --id X -- docker compose up`
         i = argv.index("--")
         argv, comando = argv[:i], argv[i + 1:]
     args = parser().parse_args(argv)

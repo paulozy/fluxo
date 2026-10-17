@@ -5,6 +5,8 @@ PR e conclusão) para usar com **Claude Code**, **GitHub Copilot CLI**, **Kiro C
 CLI**. Tudo é instalado no nível do usuário (`~/.claude`, `~/.copilot`, `~/.kiro`, `~/.codex`):
 **nada entra no repo da empresa**.
 
+Primeira vez? O [guia de uso](docs/guia.md) leva da instalação a uma tarefa inteira, com exemplos.
+
 ## Requisitos
 
 - Python 3.9 ou mais novo, só a biblioteca padrão. O do Xcode, no Mac, serve.
@@ -16,12 +18,47 @@ CLI**. Tudo é instalado no nível do usuário (`~/.claude`, `~/.copilot`, `~/.k
 ```bash
 git clone git@github.com:paulozy/fluxo.git ~/fluxo   # ou o zip, veja abaixo
 cd ~/fluxo
-./fluxo init --tool copilot --forge gitlab --gitlab-host gitlab.empresa.com --code-dir ~/code \
-  --promote-to staging,main     # só para o módulo promote: as bases depois da develop
+./fluxo init                  # pergunta as ferramentas, o forge, a base, a pasta dos clones e os módulos
 ./fluxo install --dry-run     # mostra o que vai gravar
 ./fluxo install
 fluxo doctor                  # o install cria ~/.local/bin/fluxo
 ```
+
+O `init` pergunta cada opção no terminal, com o padrão entre colchetes (Enter aceita). As listas aceitam os
+números ou os nomes, separados por vírgula:
+
+```
+Ferramentas (a primeira é a padrão do `fluxo task`):
+  1) claude   (no PATH)
+  2) copilot  (no PATH)
+  3) kiro
+  4) codex
+Números ou nomes, separados por vírgula: 2,1
+Onde ficam os repos:
+  1) github
+  2) gitlab
+Número ou nome [github]: gitlab
+Host do GitLab: gitlab.empresa.com
+Branch de desenvolvimento (de onde saem as branches) [develop]:
+…
+```
+
+No fim, ele mostra a config, pergunta se grava e lista o que falta rodar, como o `fluxo validate enable`
+quando o módulo `validate` foi escolhido. Ctrl-C cancela sem gravar nada, com saída 130.
+
+Rodado de novo, o `init` pergunta se refaz a config, e os valores dela viram os padrões. Os módulos são
+perguntados de novo, com os ligados de padrão. As opções deles (`task`, `watch`, `promote`, `validate`) e o
+`models` ficam.
+
+**Para script, sem perguntas,** passe as flags. Com `--tool` e `--forge`, nada é perguntado:
+
+```bash
+./fluxo init --tool copilot --forge gitlab --gitlab-host gitlab.empresa.com --code-dir ~/code \
+  --promote-to staging,main     # só para o módulo promote: as bases depois da develop
+```
+
+Sem terminal, com `--no-input`, com a variável `CI` ou com `TERM=dumb`, o `init` nunca pergunta. Nesses casos,
+faltar `--tool` ou `--forge` é erro de uso, com saída 2. Uma config que já existe só é refeita com `--force`.
 
 O `init` grava `~/.config/fluxo/config.json`:
 
@@ -32,7 +69,8 @@ O `init` grava `~/.config/fluxo/config.json`:
 | `kiro.engine` | `v2` (padrão), `v3` | nomes de ferramenta dos agentes do Kiro |
 | `git.base` | `develop` | de onde saem as branches |
 | `code_dir` | `~/code` | onde ficam os clones |
-| `chat`, `tracker`, `os` | `draft`, `none`, detectado | usados pelos módulos |
+| `os` | detectado | a área de transferência, o aviso na área de trabalho e o agendamento do watch |
+| `chat`, `tracker` | `draft`, `none` | reservados: hoje nenhuma fonte muda por eles |
 | `models` | `{"copilot": {"strong": "…", "medium": "…", "light": "…"}}` | modelo de cada agente, por ferramenta; vazio = herda o da sessão (padrão fora do Claude) |
 
 ## O que é instalado
@@ -149,7 +187,7 @@ imprime uma delas uma vez.
 - `f` segue a escolhida, e `Tab` passa para a próxima.
 - `←→` trocam a tarefa.
 - `PgUp`/`PgDn` rolam.
-- `h` esconde, e `q` sai.
+- `h` esconde, e `q` (ou `Esc`) sai.
 
 Sem nada fixado, a aba 1 segue a sessão mais recente, mas só troca quando a seguida para. `--follow <id>` e
 `--task <ID>` fixam.
@@ -231,7 +269,7 @@ FLUXO_ATUALIZAR_ESPERADO=1 python3 -m unittest discover -s tests -p test_install
   - `nucleo/` tem as fontes: instruções, agentes e skills;
   - `adaptadores/` tem os dados por ferramenta e por forge;
   - `lib/fluxo/` é o código;
-  - `modulos/` recebe os módulos das próximas fases.
+  - `modulos/` tem os módulos, um por pasta, com o `modulo.json`.
 - **Template das fontes:** `{{forge.pr}}`, `{{git.base}}`, `{{codigo_dir}}`, `{{dados}}`,
   `{{argumentos}}` e `{{pergunte}}`, mais blocos `<!-- se forge:gitlab -->…<!-- senao -->…<!-- fim -->`. Uma condição
   junta termos com ` e ` (`<!-- se module:reviewer e nao module:validate -->`), e todos têm de valer.

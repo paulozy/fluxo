@@ -1,5 +1,39 @@
 # Changelog
 
+## [0.9.0] — 2026-10-17
+
+### Adicionado
+
+- **`fluxo init` interativo.** Sem `--tool` e `--forge`, num terminal, o `init` pergunta cada opção, com o
+  padrão entre colchetes:
+  - as ferramentas, marcando as que estão no PATH;
+  - o forge, e o host com o GitLab;
+  - o engine com o Kiro;
+  - a base, a pasta dos clones e o sistema;
+  - os módulos, com a descrição de cada um. Um módulo que as ferramentas escolhidas não atendem é recusado,
+    como o panel só com o Claude;
+  - as bases do promote.
+
+  No fim, ele mostra a config, pergunta se grava e lista o que falta rodar (`install`, `validate enable`,
+  `watch enable`, `panel enable` no Kiro V2, `msg tone`). Rodado de novo, os valores da config que já existe
+  viram os padrões. As perguntas vão para o stderr, e EOF ou Ctrl-C cancelam sem gravar, com saída 130.
+- **`--no-input`:** o `init` nunca pergunta. O mesmo vale sem terminal, com `CI` definida ou com `TERM=dumb`.
+  Nesses casos, faltar `--tool` ou `--forge` é erro de uso (2).
+
+### Documentação
+
+- **`docs/guia.md`:** o guia de uso para quem chega, com a instalação, uma tarefa de ponta a ponta, cada módulo
+  com exemplo, a validação com o pr-reviewer, os problemas comuns e a referência rápida.
+- **README:**
+  - o `os` diz para que serve;
+  - o `chat` e o `tracker` aparecem como reservados, porque nenhuma fonte muda por eles;
+  - o `Esc` entra nas teclas do painel.
+
+### Mudado
+
+- As flags do `init` deixaram de ter padrão no parser, para o assistente saber o que foi dado. Os padrões são
+  os mesmos (`develop`, `~/code`, `draft`, `none`, `v2`), aplicados pelo `init`.
+
 ## [0.8.0] — 2026-10-17
 
 ### Adicionado

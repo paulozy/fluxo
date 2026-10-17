@@ -10,7 +10,9 @@ from pathlib import Path
 from unittest import mock
 
 from base import RAIZ, cfgmod, escrever_config
-from fluxo import cli, validate
+from fluxo import cli, lock, validate
+import sys
+import textwrap
 
 TEM_GIT = shutil.which("git") is not None
 GIT_ENV = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@exemplo.com", "GIT_COMMITTER_NAME": "t",
@@ -258,6 +260,132 @@ class SemRede(unittest.TestCase):
         def com_core(argv, **kw):
             return subprocess.CompletedProcess(argv, 0, "ssh -F meu\n", "")
         self.assertNotIn("GIT_SSH_COMMAND", validate._ambiente({}, com_core), "your core.sshCommand too")
+
+
+FALSO = textwrap.dedent("""
+    import json, os, sys
+    pasta = os.environ["RELATORIO"]
+    if "recipe" in sys.argv:
+        print(json.dumps({"status": "pending", "repo": "api", "proposal": "/runs/p/proposal.json", "confirm": "c" * 64,
+                          "summary": ["executáveis:", "    node"], "warnings": ["cobertura reduzida: x"], "diff": ["+ linha"], "failures": []}))
+        sys.exit(5)
+    os.makedirs(pasta, exist_ok=True)
+    decisao = os.environ.get("DECISAO", "APROVÁVEL")
+    json.dump({"verdict": {"decision": decisao, "staticOnly": False, "reasons": ["F1 (grave): quebra"] if decisao == "REPROVAR" else []}}, open(os.path.join(pasta, "report.json"), "w"))
+    print("veredito: " + decisao)
+    print("relatório: " + os.path.join(pasta, "report.md"))
+    sys.exit({"APROVÁVEL": 0, "REPROVAR": 4}[decisao])
+""")
+
+
+ESPERA_TESTE = 30
+
+
+@unittest.skipUnless(TEM_GIT, "sem git nesta máquina")
+class Revisao(unittest.TestCase):
+    """start, o processo de fundo e status, com um pr-review falso."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="fluxo-validate-"))
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.home = self.tmp / "home"
+        self.code = self.tmp / "code"
+        self.cam = escrever_config(self.home, "claude", modules=["validate", "lock"], code_dir=str(self.code))
+        self.cfg = cfgmod.carregar(self.cam, ("validate", "lock"))
+        (self.cam.dados / "pr-reviewer" / "bin").mkdir(parents=True)
+        (self.cam.dados / "pr-reviewer" / "bin" / "pr-review.ts").write_text("")
+        # o repo, o remoto e a worktree da tarefa, como o /planejar deixa
+        remoto = self.tmp / "api.git"
+        subprocess.run(["git", "init", "-q", "--bare", "-b", "develop", str(remoto)], check=True)
+        principal = self.code / "api"
+        principal.mkdir(parents=True)
+        git(principal, "init", "-q", "-b", "develop")
+        (principal / "a.txt").write_text("a")
+        git(principal, "add", "-A")
+        git(principal, "commit", "-q", "-m", "base")
+        git(principal, "remote", "add", "origin", str(remoto))
+        git(principal, "push", "-q", "origin", "develop")
+        self.wt = self.code / "api-T1"
+        git(principal, "worktree", "add", "-q", "-b", "feat/T1", str(self.wt))
+        planos = self.cam.dados / "planos"
+        planos.mkdir(parents=True)
+        self.plano = planos / "T1.md"
+        self.plano.write_text("---\nstatus: em andamento\nrepos: [api]\nbase: develop\n---\n# T1\n")
+        self.falso = self.tmp / "falso.py"
+        self.falso.write_text(FALSO)
+
+    def test_monta_um_local_por_repo_na_branch_da_worktree_e_a_base_do_plano(self):
+        argv, avisos = validate.preparar_revisao(self.cfg, self.cam, "T1", "kiro", run=rodar_git)
+        clone = self.cam.dados / "pr-reviewer" / "bin" / "pr-review.ts"
+        self.assertEqual(argv, ["node", str(clone), "--local", "api:feat/T1", "--base", "origin/develop", "--plan", str(self.plano), "--backend", "kiro"])
+        self.assertEqual(avisos, [])
+        sem, _ = validate.preparar_revisao(self.cfg, self.cam, "T1", "copilot", run=rodar_git)
+        self.assertNotIn("--backend", sem, "the pr-reviewer has no copilot adapter: its config decides")
+
+    def test_recusa_mudanca_nao_commitada_worktree_ausente_e_plano_sem_repos(self):
+        (self.wt / "b.txt").write_text("b")
+        with self.assertRaisesRegex(cfgmod.ErroConfig, "mudança não commitada; o pr-review só vê o que está commitado"):
+            validate.preparar_revisao(self.cfg, self.cam, "T1", None, run=rodar_git)
+        (self.wt / "b.txt").unlink()
+        self.plano.write_text("---\nrepos: [api, web]\n---\n")
+        with self.assertRaisesRegex(cfgmod.ErroConfig, "a worktree .*web-T1 não existe"):
+            validate.preparar_revisao(self.cfg, self.cam, "T1", None, run=rodar_git)
+        self.plano.write_text("---\nstatus: x\n---\n")
+        with self.assertRaisesRegex(cfgmod.ErroConfig, "o frontmatter precisa de repos"):
+            validate.preparar_revisao(self.cfg, self.cam, "T1", None, run=rodar_git)
+        with self.assertRaisesRegex(cfgmod.ErroConfig, "não existe: o /planejar grava o plano antes"):
+            validate.preparar_revisao(self.cfg, self.cam, "T2", None, run=rodar_git)
+        with self.assertRaisesRegex(cfgmod.ErroConfig, "inválido"):
+            validate.preparar_revisao(self.cfg, self.cam, "../x", None, run=rodar_git)
+
+    def rodar_fundo(self, chave, argv, trava=True, espera=ESPERA_TESTE, **env):
+        pasta = self.tmp / "runs" / chave
+        with mock.patch.dict(os.environ, RELATORIO=str(pasta), **env):
+            validate.start(self.cfg, self.cam, RAIZ, chave, argv, trava, espera=espera)
+            return validate.status(self.cam, chave, esperar=60)
+
+    def test_le_o_veredito_do_relatorio_e_nao_da_saida(self):
+        code, linhas = self.rodar_fundo("T1", [sys.executable, str(self.falso)], DECISAO="REPROVAR")
+        self.assertEqual(code, 0, linhas)
+        self.assertEqual(linhas[:2], ["veredito: REPROVAR", "- F1 (grave): quebra"])
+        self.assertTrue(linhas[2].startswith("relatório: ") and linhas[2].endswith("report.md"))
+        self.assertIsNone(lock.Trava(self.cam.estado).ler(), "the lock was released")
+
+    def test_trava_ocupada_nao_vira_reprovar(self):
+        outra = lock.Trava(self.cam.estado)
+        outra.pegar(sessao="outra-sessao", pid=os.getpid())
+        code, linhas = self.rodar_fundo("T1", [sys.executable, str(self.falso)], espera=1, DECISAO="REPROVAR")
+        self.assertEqual(code, 1)
+        self.assertRegex(linhas[0], r"^T1: a trava do stack continuou ocupada \(.*outra-sessao.*\); rode de novo")
+        self.assertFalse((self.tmp / "runs" / "T1").exists(), "the review never ran")
+
+    def test_status_enquanto_roda_e_sem_execucao(self):
+        self.assertEqual(validate.status(self.cam, "T9")[0], 1)
+        lento = self.tmp / "lento.py"
+        lento.write_text("import time; time.sleep(30)\n")
+        validate.start(self.cfg, self.cam, RAIZ, "T1", [sys.executable, str(lento)], False)
+        code, linhas = validate.status(self.cam, "T1")
+        self.assertEqual(code, 75, linhas)
+        self.assertRegex(linhas[0], r"^T1: (começando|rodando)")
+        with self.assertRaisesRegex(cfgmod.ErroConfig, "já há uma execução de T1 rodando"):
+            validate.start(self.cfg, self.cam, RAIZ, "T1", [sys.executable, str(lento)], False)
+        pid = validate._ler(self.cam.estado / "validar" / "T1" / "fase.json")["pid"]
+        os.kill(pid, 15)
+
+    def test_receita_pendente_mostra_o_comando_que_grava(self):
+        code, linhas = self.rodar_fundo("receita-api", [sys.executable, str(self.falso), "recipe", "api", "--json"], trava=False)
+        self.assertEqual(code, 0, linhas)
+        self.assertEqual(linhas[0], "receita de api: pending")
+        self.assertIn("atenção: cobertura reduzida: x", linhas)
+        self.assertIn(f"para gravar, depois do OK: fluxo validate exec -- recipe api --apply=/runs/p/proposal.json --confirm={'c' * 64}", linhas)
+
+    def test_receita_monta_o_modo_e_o_backend(self):
+        clone = str(self.cam.dados / "pr-reviewer" / "bin" / "pr-review.ts")
+        self.assertEqual(validate.preparar_receita(self.cfg, self.cam, "api", "proposta", "codex"), ["node", clone, "recipe", "api", "--json", "--backend", "codex"])
+        self.assertEqual(validate.preparar_receita(self.cfg, self.cam, "api", "fix", "copilot"), ["node", clone, "recipe", "api", "--fix", "--json"])
+        self.assertEqual(validate.preparar_receita(self.cfg, self.cam, "api", "check", "kiro"), ["node", clone, "recipe", "api", "--check", "--json"])
+        with self.assertRaisesRegex(cfgmod.ErroConfig, "nome de repo inválido"):
+            validate.preparar_receita(self.cfg, self.cam, "../x", "proposta", None)
 
 
 class Linha(unittest.TestCase):

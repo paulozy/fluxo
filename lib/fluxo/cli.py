@@ -170,6 +170,34 @@ def cmd_validate(args, raiz):
         argv = validate.comando(cfg, cam, args.comando)
         os.execvp(argv[0], argv)
         return 1  # o execvp só volta se falhar; nunca segue para outra ação
+    if args.acao == "_rodar":  # o processo de fundo que o start solta
+        return validate.rodar(cam, args.alvo)
+    if (args.fix or args.check) and not args.recipe:
+        raise cfgmod.ErroConfig("--fix e --check são do --recipe")
+    if args.acao == "start":
+        if args.recipe:
+            modo = "fix" if args.fix else "check" if args.check else "proposta"
+            if args.fix and args.check:
+                raise cfgmod.ErroConfig("--fix e --check não combinam")
+            argv, avisos = validate.preparar_receita(cfg, cam, args.recipe, modo, args.backend), []
+            chave, trava = f"receita-{args.recipe}", modo == "check" and "lock" in cfg["modules"]
+        else:
+            if not args.alvo:
+                raise cfgmod.ErroConfig("fluxo validate start <id>, ou --recipe <repo>")
+            argv, avisos = validate.preparar_revisao(cfg, cam, args.alvo, args.backend)
+            chave, trava = args.alvo, "lock" in cfg["modules"]
+        validate.start(cfg, cam, raiz, chave, argv, trava, id_=args.alvo or chave)
+        for a in avisos:
+            print(f"aviso: {a}")
+        print(f"{chave}: rodando em segundo plano. Acompanhe com: fluxo validate status {chave} --wait 540")
+        return 0
+    if args.acao == "status":
+        if not args.alvo:
+            raise cfgmod.ErroConfig("fluxo validate status <id> (ou receita-<repo>)")
+        code, linhas = validate.status(cam, args.alvo, args.wait)
+        for linha in linhas:
+            print(linha)
+        return code
     if args.acao == "enable":
         code, msgs = validate.enable(cfg, cam, run=subprocess.run, profile=args.profile)
     else:
@@ -400,9 +428,15 @@ def parser():
     p.add_argument("--target", help="enable no WSL: sessão do tmux onde abrir a janela do watch")
     p.set_defaults(fn=cmd_watch)
 
-    p = sub.add_parser("validate", help="o pr-reviewer (módulo validate): enable clona, disable tira, exec roda")
-    p.add_argument("acao", choices=("enable", "disable", "exec"))
+    p = sub.add_parser("validate", help="o pr-reviewer (módulo validate): enable clona, start revisa em segundo plano, status acompanha")
+    p.add_argument("acao", choices=("enable", "disable", "exec", "start", "status", "_rodar"))
+    p.add_argument("alvo", nargs="?", metavar="ID", help="start/status: a tarefa (status da receita: receita-<repo>)")
     p.add_argument("--profile", default="local", help="enable: o perfil da config do pr-reviewer que ele cria (padrão: local)")
+    p.add_argument("--recipe", metavar="REPO", help="start: o runbook do repo, em vez da revisão")
+    p.add_argument("--fix", action="store_true", help="start --recipe: refaz com o último --check que falhou")
+    p.add_argument("--check", action="store_true", help="start --recipe: sobe o stack com o runbook do perfil")
+    p.add_argument("--backend", help="start: a ferramenta dos agentes do pr-review (claude, kiro ou codex)")
+    p.add_argument("--wait", type=int, default=0, help="status: segundos esperando terminar (até 540)")
     p.set_defaults(fn=cmd_validate)
 
     p = sub.add_parser("hook", help="(chamado pelas ferramentas) grava um evento para o painel")

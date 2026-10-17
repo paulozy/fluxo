@@ -7,12 +7,18 @@ lugar no fim, porque o timeout mata o git com SIGKILL e deixaria a pasta pela me
 """
 import json
 import os
+import re
 import shlex
 import shutil
 import subprocess
+import sys
+import time
 from pathlib import Path
 
 from . import config as cfgmod
+from . import fonte as fontemod
+from . import lock
+from .task import ID_RE
 
 # a versão do pr-reviewer que esta versão do fluxo usa
 PR_REVIEWER = {
@@ -269,3 +275,183 @@ def avisos_do_uninstall(cam):
         return ["validate: o clone do pr-reviewer, o comando pr-review e a config dele ficam; "
                 "rode `fluxo validate disable` antes, se quiser tirá-los"]
     return []
+
+
+# ── a revisão e a receita em segundo plano ───────────────────────────────────
+#
+# Uma revisão leva de 4 a 20 min, e o comando da ferramenta tem limite de tempo (no Claude, 10 min); o timeout
+# mata o que ela rodou. Por isso o `start` solta um processo desligado da sessão, que pega a trava do stack com o
+# próprio pid (ela vale enquanto ele vive) e grava o fim; o `status` acompanha. A trava ocupada nunca se confunde
+# com a saída 4 do pr-review, que é REPROVAR.
+
+SEM_ADAPTADOR = {"copilot"}  # o pr-reviewer ainda não roda os agentes nela: vale o backend da config dele
+ESPERA = 3600
+CHAVE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,60}$")
+
+
+def _pasta_execucao(cam, chave):
+    return cam.estado / "validar" / chave
+
+
+def _vivo(pid):
+    try:
+        os.kill(int(pid), 0)
+    except PermissionError:
+        return True
+    except (OSError, ValueError, TypeError):
+        return False
+    return True
+
+
+def _rodando(pasta):
+    fase = _ler(pasta / "fase.json")
+    return bool(fase.get("pid")) and not (pasta / "fim.json").exists() and _vivo(fase["pid"])
+
+
+def _backend(backend):
+    return [] if not backend or backend in SEM_ADAPTADOR else ["--backend", backend]
+
+
+def preparar_revisao(cfg, cam, id_, backend, run=subprocess.run):
+    """O argv do pr-review para a tarefa: um --local por repo do plano, na branch da worktree, e a base do plano."""
+    if not ID_RE.fullmatch(id_):
+        raise cfgmod.ErroConfig(f"id {id_!r} inválido")
+    plano = cam.dados / "planos" / f"{id_}.md"
+    try:
+        meta, _ = fontemod.ler(plano.read_text(encoding="utf-8"), str(plano))
+    except FileNotFoundError:
+        raise cfgmod.ErroConfig(f"{plano} não existe: o /planejar grava o plano antes") from None
+    repos = meta.get("repos")
+    if isinstance(repos, str):
+        repos = [repos]
+    if not isinstance(repos, list) or not repos or not all(isinstance(r, str) and re.fullmatch(r"[\w.-]+", r) for r in repos):
+        raise cfgmod.ErroConfig(f"{plano}: o frontmatter precisa de repos: [repo, ...]")
+    base = meta.get("base") or cfg["git"]["base"]
+    if not isinstance(base, str) or not cfgmod.BRANCH.fullmatch(base):
+        raise cfgmod.ErroConfig(f"{plano}: base {base!r} inválida")
+    locais, avisos = [], []
+    for repo in repos:
+        wt = Path(os.path.expanduser(cfg["code_dir"])) / f"{repo}-{id_}"
+        if not wt.is_dir():
+            raise cfgmod.ErroConfig(f"a worktree {wt} não existe")
+        branch = run(["git", "-C", str(wt), "branch", "--show-current"], capture_output=True, text=True).stdout.strip()
+        if not branch:
+            raise cfgmod.ErroConfig(f"{wt} não está numa branch")
+        sujo = run(["git", "-C", str(wt), "status", "--porcelain"], capture_output=True, text=True).stdout.strip()
+        if sujo:
+            raise cfgmod.ErroConfig(f"{wt} tem mudança não commitada; o pr-review só vê o que está commitado: commite antes")
+        if run(["git", "-C", str(wt), "fetch", "-q", "origin", base], capture_output=True, text=True).returncode != 0:
+            avisos.append(f"{repo}: o git fetch origin {base} falhou; a revisão usa a origin/{base} que já está aqui")
+        locais += ["--local", f"{repo}:{branch}"]
+    argv = comando(cfg, cam, [*locais, "--base", f"origin/{base}", "--plan", str(plano), *_backend(backend)])
+    return argv, avisos
+
+
+def preparar_receita(cfg, cam, repo, modo, backend):
+    if not re.fullmatch(r"[\w-]+", repo):
+        raise cfgmod.ErroConfig(f"nome de repo inválido: {repo!r}")
+    extra = {"proposta": [], "fix": ["--fix"], "check": ["--check"]}[modo]
+    # o --check não roda agente, e o pr-review recusa --backend com ele
+    return comando(cfg, cam, ["recipe", repo, *extra, "--json", *([] if modo == "check" else _backend(backend))])
+
+
+def start(cfg, cam, raiz, chave, argv, trava, id_=None, popen=subprocess.Popen, espera=ESPERA):
+    """Solta o processo que roda o pr-review desligado da sessão. Devolve a pasta da execução."""
+    if not CHAVE_RE.fullmatch(chave):
+        raise cfgmod.ErroConfig(f"chave {chave!r} inválida")
+    pasta = _pasta_execucao(cam, chave)
+    if _rodando(pasta):
+        raise cfgmod.ErroConfig(f"já há uma execução de {chave} rodando: fluxo validate status {chave}")
+    cfgmod.criar_estado(cam.estado)
+    shutil.rmtree(pasta, ignore_errors=True)
+    pasta.mkdir(parents=True, mode=0o700)
+    _gravar(pasta / "pedido.json", {"argv": argv, "trava": trava, "id": id_ or chave, "espera": espera,
+                                    "criado": time.strftime("%Y-%m-%d %H:%M:%S")})
+    home = ["--home", str(cam.home)] if cam.home != Path.home() else []
+    with open(pasta / "saida.log", "wb") as out, open(pasta / "erros.log", "wb") as err:
+        proc = popen([sys.executable, str(Path(raiz) / "fluxo"), "validate", "_rodar", chave, *home],
+                     stdin=subprocess.DEVNULL, stdout=out, stderr=err, start_new_session=True)
+    # já com o pid: até o processo gravar a fase dele, o status o daria por morto
+    _gravar(pasta / "fase.json", {"fase": "começando", "pid": proc.pid})
+    return pasta
+
+
+def rodar(cam, chave, run=subprocess.run):
+    """O processo de fundo: pega a trava (se pedido) com o próprio pid, roda o pr-review e grava o fim."""
+    pasta = _pasta_execucao(cam, chave)
+    pedido = _ler(pasta / "pedido.json")
+    sessao = f"validar-{chave}"
+    t = lock.Trava(cam.estado) if pedido.get("trava") else None
+    if t:
+        _gravar(pasta / "fase.json", {"fase": "esperando a trava do stack", "pid": os.getpid()})
+        ok, dono, _ = lock.pegar_esperando(t, int(pedido.get("espera", ESPERA)), sessao=sessao, pid=os.getpid(), id_=pedido.get("id"))
+        if not ok:
+            _gravar(pasta / "fim.json", {"ocupada": lock.descrever(dono, True)})
+            return lock.OCUPADA
+    try:
+        _gravar(pasta / "fase.json", {"fase": "rodando", "pid": os.getpid()})
+        codigo = run(pedido["argv"], stdin=subprocess.DEVNULL).returncode
+        _gravar(pasta / "fim.json", {"codigo": codigo, "terminado": time.strftime("%Y-%m-%d %H:%M:%S")})
+        return codigo
+    finally:
+        if t:
+            t.soltar(sessao)
+
+
+def _relatorio(pasta):
+    """O report.json da revisão: a linha `relatório: <pasta>/report.md` que o pr-review imprime no fim."""
+    for nome in ("saida.log", "erros.log"):
+        texto = (pasta / nome).read_text(encoding="utf-8", errors="replace") if (pasta / nome).exists() else ""
+        m = re.search(r"^relatório: (.+)/report\.md$", texto, re.M)
+        if m:
+            return Path(m.group(1)) / "report.json"
+    return None
+
+
+def status(cam, chave, esperar=0, dormir=time.sleep, relogio=time.monotonic):
+    """(código, linhas): 0 terminou, 75 ainda rodando, 1 não há execução ou ela falhou sem resultado."""
+    pasta = _pasta_execucao(cam, chave)
+    pedido = _ler(pasta / "pedido.json")
+    if not pedido:
+        return 1, [f"não há execução de {chave}: fluxo validate start {chave}"]
+    fim_em = relogio() + max(0, min(esperar, 540))
+    while not (pasta / "fim.json").exists() and _rodando(pasta) and relogio() < fim_em:
+        dormir(min(5, max(0.5, fim_em - relogio())))
+    fim = _ler(pasta / "fim.json")
+    logs = f"logs: {pasta / 'saida.log'} e {pasta / 'erros.log'}"
+    if not fim:
+        if _rodando(pasta):
+            return 75, [f"{chave}: {_ler(pasta / 'fase.json').get('fase', 'rodando')} (desde {pedido.get('criado')})", logs]
+        return 1, [f"{chave}: o processo terminou sem registrar o fim", logs]
+    if "ocupada" in fim:
+        return 1, [f"{chave}: a trava do stack continuou ocupada ({fim['ocupada']}); rode de novo quando ela soltar", logs]
+    if "recipe" in pedido["argv"]:
+        return 0, _resumo_receita(pasta, fim, logs)
+    report = _relatorio(pasta)
+    dados = _ler(report) if report else {}
+    if not dados:
+        return 1, [f"{chave}: o pr-review saiu com {fim['codigo']} sem relatório", logs]
+    veredito = dados.get("verdict") or {}
+    linhas = [f"veredito: {veredito.get('decision', '?')}{' (só estática)' if veredito.get('staticOnly') else ''}"]
+    linhas += [f"- {r}" for r in veredito.get("reasons") or []]
+    linhas.append(f"relatório: {report.with_name('report.md')}")
+    return 0, linhas
+
+
+def _resumo_receita(pasta, fim, logs):
+    try:
+        r = json.loads((pasta / "saida.log").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return [f"o recipe saiu com {fim['codigo']} sem o JSON", logs]
+    linhas = [f"receita de {r.get('repo')}: {r.get('status')}"]
+    if r.get("status") in ("healthy", "unhealthy"):
+        linhas += [f"- {'ok' if st.get('ok') else 'falhou'} {st.get('phase')} {st.get('name')}: {(st.get('detail') or '').splitlines()[0] if st.get('detail') else ''}"
+                   for st in r.get("steps") or []]
+        return linhas + [logs]
+    linhas += r.get("summary") or []
+    linhas += [f"atenção: {w}" for w in r.get("warnings") or []]
+    linhas += r.get("diff") or []
+    linhas += r.get("failures") or []
+    if r.get("status") == "pending":
+        linhas.append(f"para gravar, depois do OK: fluxo validate exec -- recipe {r.get('repo')} --apply={r.get('proposal')} --confirm={r.get('confirm')}")
+    return linhas + [logs]

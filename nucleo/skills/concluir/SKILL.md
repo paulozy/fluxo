@@ -10,7 +10,14 @@ O pedido: {{argumentos}}
 
 Rode depois do code review e do E2E. Siga esta ordem: o plano fecha por último, porque só então
 existem os links.
-<!-- se module:reviewer -->
+<!-- se module:validate -->
+
+**Antes de tudo, a validação:** siga a skill `{{skill.validar}}` com o `<id>` da tarefa. Continue só com
+APROVÁVEL, ou com o ok explícito do usuário sobre o relatório. Se a validação levou a mudar código, o resumo,
+as docs e o CHANGELOG abaixo descrevem o código novo, e o fechamento do plano registra o que mudou depois do
+E2E.
+<!-- fim -->
+<!-- se module:reviewer e nao module:validate -->
 
 **Antes de tudo, a revisão:** siga a skill `{{skill.revisar-pr}}` com o `<id>` da tarefa. Continue só com
 APROVÁVEL, ou com o ok explícito do usuário sobre o relatório. Se a revisão mudou código, o resumo,

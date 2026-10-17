@@ -1,6 +1,24 @@
 # Changelog
 
-## [Não lançado]
+## [0.8.0] — 2026-10-17
+
+### Adicionado
+
+- **Módulo `validate`:** as skills `/validar <id>` e `/receita <repo>`, com o pr-reviewer. O `/validar`
+  confere a premissa do plano, revisa o código com agentes isolados e, com runbook, executa a mudança num
+  stack local; o `/receita` escreve o runbook com a confirmação do usuário e testa ele. Com o módulo, o
+  `/concluir` valida antes da PR/MR, e o `/revisar-pr` fica manual.
+- **`fluxo validate enable`** traz o pr-reviewer na tag fixada por esta versão do fluxo (`v0.5.0`), conferindo
+  o sha do commit, e cria a config dele e o comando `pr-review` só se não existirem. Um clone com mudança
+  local nunca é descartado; `disable` tira o que o enable criou, nas mesmas condições. O `install` continua sem
+  rede.
+- **`fluxo validate start`/`status`/`stop`** rodam a revisão (`<id>`) e a receita (`--recipe <repo>`) em segundo
+  plano, desligadas da sessão (uma revisão passa do limite de tempo de um comando da ferramenta), com a trava do
+  stack pega pelo próprio processo: "ocupada" nunca se confunde com a saída 4 do pr-reviewer, que é REPROVAR. O
+  veredito vem do `report.json`, e o `stop` cancela o pr-reviewer, que derruba o stack antes de sair. O texto de
+  terceiro sai numa linha só, sem forjar linhas do fluxo.
+- O `doctor` confere o Node 22.18+, o docker, o clone na tag fixada e o `workspaceRoot` do pr-reviewer.
+- Condições de template com termos unidos por ` e ` (`<!-- se module:reviewer e nao module:validate -->`).
 
 ### Mudado
 

@@ -71,11 +71,41 @@ e lembra de rodar `fluxo install`.
 | `panel` | `fluxo panel`: as sessões ao vivo em 4 abas (sessão, tarefa, global, sessões; veja [Painel](#painel)), com Enter levando até a sessão no tmux. Os hooks vão para `~/.copilot/hooks`, `~/.kiro/hooks` ou `~/.codex/hooks.json` (no Codex, aprovados em `/hooks`); no Kiro V2, um agente `fluxo` vira o padrão (`fluxo panel enable`). Copilot, Kiro e Codex: no Claude o painel é o agent-tree. | tmux |
 | `promote` | skill `/promover <id>`: depois do QA, leva os commits que entraram na base para as bases seguintes (`promote.targets`, ex.: staging e main), por cherry-pick, com uma PR/MR por base. Mostra tudo antes de publicar; o merge é sempre seu ou do time. | — |
 | `reviewer` | skill `/revisar-pr` e o agente `verificador`: duas revisões isoladas (`code-reviewer` + diff contra o plano), relatório com veredito (REPROVAR, PRECISA DE HUMANO, APROVÁVEL) em `~/.local/share/fluxo/revisoes/`. O `/concluir` roda antes de abrir a PR/MR. | — |
+| `validate` | skills `/validar <id>` e `/receita <repo>`, com o pr-reviewer: confere a premissa do plano, revisa o código com agentes isolados e, com runbook, executa a mudança num stack local, na base e na branch. Roda em segundo plano (`fluxo validate start`/`status`). Com ele, o `/concluir` valida antes da PR/MR, e o `/revisar-pr` fica manual. O pr-reviewer chega com `fluxo validate enable` (veja [Validação](#validação-com-o-pr-reviewer)). | Node 22.18+, git com acesso ao repo do pr-reviewer, docker para a execução |
 
 - **Comando de abertura de cada ferramenta:** fica em `adaptadores/ferramenta/*.json` (`lancar`). Se o
   da sua versão for outro, sobrescreva na config, por ferramenta:
   `"task": {"launch": {"copilot": ["copilot", "-i", "{prompt}"]}}`.
 - **Fora do tmux:** use `--target <sessão>:`.
+
+## Validação com o pr-reviewer
+
+O `fluxo install` não usa rede. Quem traz o pr-reviewer é o `fluxo validate enable`, como o `watch enable`:
+
+- clona o pr-reviewer na tag que esta versão do fluxo fixa (em `lib/fluxo/validate.py`, com o sha do commit,
+  que é conferido) em `~/.local/share/fluxo/pr-reviewer`, por HTTPS, com o seu acesso ao GitHub: o
+  `gh auth setup-git` libera o repo privado; com ssh, `git config --global url.git@github.com:paulozy/.insteadOf https://github.com/paulozy/`;
+- cria `~/.config/pr-reviewer/config.json` só se não existir: `workspaceRoot` = `code_dir`, as bases do
+  `git.base` e o perfil `local` (`--profile <nome>` troca);
+- cria o comando `~/.local/bin/pr-review` só se não houver um. As skills não dependem dele: usam
+  `fluxo validate`.
+
+Rodado de novo depois de atualizar o fluxo, o `enable` leva o clone para a tag nova, mas só se ele estiver
+limpo: um arquivo mudado, novo ou ignorado, um commit, um branch ou um stash seus nunca são descartados, e o
+`enable` avisa. `fluxo validate disable` tira o comando e o clone, nas mesmas condições; a config do
+pr-reviewer fica. Para usar um clone seu (o de desenvolvimento), ponha `"validate": {"dir": "~/code/pr-reviewer-core"}`
+na config: o fluxo nunca mexe nele.
+
+- `fluxo validate start <id> [--backend B]` revisa a tarefa em segundo plano: um `--local` por repo do plano,
+  na branch da worktree, com a base do plano. Com o módulo `lock`, o processo espera a trava do stack.
+- `fluxo validate start --recipe <repo> [--fix|--check]` escreve ou testa o runbook.
+- `fluxo validate status <id> [--wait 100]` (ou `--recipe <repo>`) acompanha: saída 75 é "ainda rodando", e no
+  fim a primeira linha é o veredito, lido do `report.json`. `fluxo validate stop <id>` cancela, e o pr-reviewer
+  derruba o stack antes de sair.
+- `fluxo validate exec -- <args>` roda o pr-reviewer do clone (o `--apply` da receita vai por ele).
+
+No Copilot, o pr-reviewer ainda não roda os agentes dele: vale o backend da config do pr-reviewer (o padrão é
+o Claude), com o custo desse backend.
 
 ## Duas ferramentas
 
@@ -203,7 +233,8 @@ FLUXO_ATUALIZAR_ESPERADO=1 python3 -m unittest discover -s tests -p test_install
   - `lib/fluxo/` é o código;
   - `modulos/` recebe os módulos das próximas fases.
 - **Template das fontes:** `{{forge.pr}}`, `{{git.base}}`, `{{codigo_dir}}`, `{{dados}}`,
-  `{{argumentos}}` e `{{pergunte}}`, mais blocos `<!-- se forge:gitlab -->…<!-- senao -->…<!-- fim -->`.
+  `{{argumentos}}` e `{{pergunte}}`, mais blocos `<!-- se forge:gitlab -->…<!-- senao -->…<!-- fim -->`. Uma condição
+  junta termos com ` e ` (`<!-- se module:reviewer e nao module:validate -->`), e todos têm de valer.
   Variável ou condição desconhecida é erro.
 - **Agentes:** frontmatter com `tools: [read, search, edit, shell, web, agent]` e
   `model: strong|medium|light`. A tradução para cada ferramenta fica em `adaptadores/ferramenta/`.

@@ -4,12 +4,13 @@ import os
 import re
 import shutil
 import subprocess
+import shlex
 import tempfile
 import unittest
 from pathlib import Path
 
 from base import CENARIOS, RAIZ, escrever_config
-from fluxo import config, fonte, montar
+from fluxo import cli, config, fonte, montar
 from fluxo.ferramentas import codex
 
 UUID_FALSO = "-".join(["0123abcd", "0123", "4abc", "8abc", "0123456789ab"])
@@ -134,11 +135,17 @@ class Formatos(unittest.TestCase):
             gerar("copilot", gitlab={"host": " "})
 
     def test_revisao_vem_antes_do_push(self):
-        for cenario in ("copilot-tudo", "claude-tudo"):
-            gerado, _ = gerar(cenario)
+        # só o reviewer: o /revisar-pr; com o validate (os "-tudo"), o /validar no lugar dele
+        for cenario in ("copilot", "claude"):
+            gerado, _ = gerar(cenario, modules=["reviewer"])
             concluir = next(t for rel, t in gerado.items() if rel.endswith("skills/concluir/SKILL.md"))
             self.assertLess(concluir.index("/revisar-pr"), concluir.index("1. **Resumo"))
             self.assertLess(concluir.index("/revisar-pr"), concluir.index("Push da branch"))
+        for cenario in ("copilot-tudo", "claude-tudo"):
+            gerado, _ = gerar(cenario)
+            concluir = next(t for rel, t in gerado.items() if rel.endswith("skills/concluir/SKILL.md"))
+            self.assertLess(concluir.index("/validar"), concluir.index("1. **Resumo"))
+            self.assertNotIn("/revisar-pr", concluir, "with validate on, the review is the pr-reviewer's")
 
     def test_promote(self):
         tudo, _ = gerar("copilot-tudo")
@@ -164,11 +171,74 @@ class Formatos(unittest.TestCase):
         self.assertNotIn("Depois do QA", sem[".copilot/instructions/fluxo.instructions.md"])
 
     def test_reviewer_ligado(self):
+        so_reviewer, _ = gerar("copilot", modules=["reviewer"])
+        self.assertIn("/revisar-pr", so_reviewer[".copilot/skills/concluir/SKILL.md"])
         tudo, _ = gerar("copilot-tudo")
-        self.assertIn("/revisar-pr", tudo[".copilot/skills/concluir/SKILL.md"])
         self.assertIn("glab mr diff", tudo[".copilot/skills/revisar-pr/SKILL.md"])
         self.assertIn(".copilot/agents/verificador.agent.md", tudo)
         self.assertIn("`verificador`", tudo[".copilot/instructions/fluxo.instructions.md"])
+
+    def test_validate(self):
+        tudo, _ = gerar("copilot-tudo")
+        validar = tudo[".copilot/skills/validar/SKILL.md"]
+        self.assertIn("fluxo validate start <id> --backend copilot", validar)
+        self.assertIn("No Copilot, o pr-reviewer ainda não roda os agentes dele aqui", validar)
+        self.assertNotIn("fora do sandbox", validar)
+        self.assertIn("Com o `/validar` no fluxo, o `/revisar-pr` fica para quando o usuário pedir.",
+                      tudo[".copilot/instructions/fluxo.instructions.md"])
+        self.assertIn("Antes da MR, o `/validar`", tudo[".copilot/instructions/fluxo.instructions.md"])
+        codex, _ = gerar("codex", modules=["validate"])
+        self.assertIn("fluxo validate start <id> --backend codex", codex[".agents/skills/validar/SKILL.md"])
+        for nome in ("validar", "receita"):
+            self.assertIn("rode cada um\n  fora do sandbox, com a aprovação do usuário", codex[f".agents/skills/{nome}/SKILL.md"], nome)
+        self.assertNotIn("fora do sandbox", tudo[".copilot/skills/receita/SKILL.md"])
+        self.assertIn("a proposta usa o backend da config dele", tudo[".copilot/skills/receita/SKILL.md"])
+        self.assertNotIn("revisar-pr", codex[".codex/AGENTS.md"] if ".codex/AGENTS.md" in codex else "", "without reviewer, no pointer to it")
+        sem, _ = gerar("claude")
+        self.assertNotIn(".claude/skills/validar/SKILL.md", sem)
+        self.assertNotIn("/validar", sem[".claude/skills/concluir/SKILL.md"])
+
+    def test_regras_de_seguranca_das_skills_do_validate(self):
+        """O que torna as skills seguras, conferido pelo sentido e não só pelo golden (que é regenerado)."""
+        gerado, _ = gerar("claude-tudo")
+        validar = gerado[".claude/skills/validar/SKILL.md"]
+        receita = gerado[".claude/skills/receita/SKILL.md"]
+        for texto in (validar, receita):
+            self.assertIn("Nunca abra arquivo de env (`.env*`) nem `~/.config/pr-reviewer/envs/`", texto)
+            self.assertIn("--wait 100", texto)
+            self.assertNotIn("--wait 540", texto)
+        self.assertIn("**PRECISA DE HUMANO:** pare.", validar)
+        self.assertIn("Nada é gravado sem o ok do usuário sobre o diff que você mostrou", receita)
+        self.assertIn("Nunca troque o hash nem edite a proposta", receita)
+        self.assertIn("Sem o ok, pare aqui.", receita)
+        self.assertIn("fluxo validate exec -- recipe <repo> --apply=<proposta> --confirm=<hash>", receita)
+        self.assertIn("fluxo validate status --recipe <repo> --wait 100", receita)
+        self.assertIn("faça **no máximo um** reparo", receita)
+        self.assertIn("Nunca abra o arquivo para conferir.", receita)
+        self.assertLess(receita.index("pergunte se pode gravar"), receita.index("## 3. Com o ok, grave"))
+
+    def test_comandos_do_validate_passam_pelo_parser(self):
+        """Cada `fluxo validate …` das skills geradas, com os marcadores trocados, é aceito pela linha de comando."""
+        troca = {"<id>": "T1", "<repo>": "api", "<proposta>": "/runs/p/proposal.json", "<hash>": "a" * 64}
+        vistos = 0
+        for cenario in ("copilot-tudo", "claude-tudo", "copilot-codex"):
+            gerado, _ = gerar(cenario)
+            for rel, texto in gerado.items():
+                # as linhas dos blocos de código e os trechos entre crases: o comando como a skill manda rodar
+                blocos = [l.strip() for b in re.findall(r"```bash\n(.*?)```", texto, re.S) for l in b.splitlines()]
+                for linha in blocos + re.findall(r"`(fluxo validate [^`]+)`", texto):
+                    if not linha.startswith("fluxo validate "):
+                        continue
+                    for k, v in troca.items():
+                        linha = linha.replace(k, v)
+                    argv = shlex.split(linha)[1:]
+                    if "--" in argv:
+                        argv = argv[:argv.index("--")]
+                    with self.subTest(rel=rel, linha=linha):
+                        args = cli.parser().parse_args(argv)
+                        self.assertEqual(args.fn, cli.cmd_validate)
+                        vistos += 1
+        self.assertGreater(vistos, 10)
 
     def test_instrucoes_listam_os_agentes(self):
         gerado, _ = gerar("kiro-v2")
@@ -337,7 +407,7 @@ class Codex(unittest.TestCase):
             with self.subTest(tools=tools):
                 gerado, _ = gerar("copilot-codex", tools=tools)
                 self.assertEqual([r for r in gerado if r.startswith(".agents/")], [])  # o Copilot também lê ali
-                self.assertEqual(len([r for r in gerado if r.startswith(".codex/skills/")]), 10)
+                self.assertEqual(len([r for r in gerado if r.startswith(".codex/skills/")]), 12)  # com validar e receita
         sozinho, _ = gerar("codex")
         self.assertEqual([r for r in sozinho if r.startswith(".codex/skills/")], [])
 

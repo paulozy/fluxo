@@ -12,7 +12,7 @@ import sys
 from pathlib import Path
 
 from . import config as cfgmod
-from . import doctor, empacotar, fonte, instalar, lock, messages, montar, panel, render, task, varredura, vistas, watch
+from . import doctor, empacotar, fonte, instalar, lock, messages, montar, panel, render, task, validate, varredura, vistas, watch
 
 ERROS_DE_USO = (cfgmod.ErroConfig, montar.ErroMontagem, render.ErroTemplate, fonte.ErroFonte)
 
@@ -163,6 +163,59 @@ def cmd_watch(args, raiz):
     return code
 
 
+def cmd_validate(args, raiz):
+    # o disable vale com o módulo desligado: é o que tira o clone depois de desligá-lo
+    cam, cfg = _carregar(args, raiz, None if args.acao == "disable" else "validate")
+    if (args.fix or args.check) and not args.recipe:
+        raise cfgmod.ErroConfig("--fix e --check são do --recipe")
+    if args.fix and args.check:
+        raise cfgmod.ErroConfig("--fix e --check não combinam")
+    if args.recipe and args.alvo:
+        raise cfgmod.ErroConfig("é a tarefa ou o --recipe <repo>, não os dois")
+    if args.acao == "exec":
+        argv = validate.comando(cfg, cam, args.comando)
+        os.execvp(argv[0], argv)
+        return 1  # o execvp só volta se falhar; nunca segue para outra ação
+    if args.acao in ("start", "status", "stop", "_rodar") and not (args.alvo or args.recipe):
+        raise cfgmod.ErroConfig(f"fluxo validate {args.acao} <id>, ou --recipe <repo>")
+    if args.acao == "_rodar":  # o processo de fundo que o start solta: o alvo já é a chave
+        return validate.rodar(cam, args.alvo)
+    if args.acao in ("start", "status", "stop"):
+        ch = validate.chave("receita", args.recipe) if args.recipe else validate.chave("revisao", args.alvo)
+        alvo = f"--recipe {args.recipe}" if args.recipe else args.alvo
+    if args.acao == "start":
+        if args.recipe:
+            modo = "fix" if args.fix else "check" if args.check else "proposta"
+            argv, avisos = validate.preparar_receita(cfg, cam, args.recipe, modo, args.backend), []
+            trava = modo == "check" and "lock" in cfg["modules"]  # só o --check sobe o stack
+        else:
+            argv, avisos = validate.preparar_revisao(cfg, cam, args.alvo, args.backend)
+            trava = "lock" in cfg["modules"]
+        validate.start(cfg, cam, raiz, ch, argv, trava, id_=args.alvo or args.recipe)
+        for a in avisos:
+            print(f"aviso: {a}")
+        print(f"{alvo}: rodando em segundo plano. Acompanhe com: fluxo validate status {alvo} --wait 540")
+        return 0
+    if args.acao == "status":
+        code, linhas = validate.status(cam, ch, args.wait)
+        for linha in linhas:
+            print(linha)
+        return code
+    if args.acao == "stop":
+        code, msg = validate.stop(cam, ch)
+        print(msg, file=sys.stderr if code else sys.stdout)
+        return code
+    if args.acao == "enable":
+        code, msgs = validate.enable(cfg, cam, run=subprocess.run, profile=args.profile)
+    elif args.acao == "disable":
+        code, msgs = validate.disable(cfg, cam, run=subprocess.run)
+    else:
+        raise cfgmod.ErroConfig(f"ação {args.acao!r} desconhecida")
+    for m in msgs:
+        print(m, file=sys.stderr if code else sys.stdout)
+    return code
+
+
 def cmd_hook(args, raiz):
     """Chamado pela ferramenta em cada evento: não lê a config (que pode estar quebrada), nunca imprime,
     sempre sai com 0."""
@@ -205,7 +258,7 @@ def cmd_init(args, raiz):
     cfg = {"version": 1, "tools": tools, "forge": args.forge, "tracker": args.tracker,
            "chat": args.chat, "os": args.os or cfgmod.detectar_so(), "modules": [],
            "git": {"base": args.base}, "code_dir": args.code_dir, "models": {}}
-    for chave in ("modules", "models", "task", "watch", "promote"):
+    for chave in ("modules", "models", "task", "watch", "promote", "validate"):
         if isinstance(anterior, dict) and chave in anterior:
             cfg[chave] = anterior[chave]
     if "kiro" in tools:
@@ -235,6 +288,7 @@ def _montar(args, raiz):
 def cmd_install(args, raiz):
     cam, cfg, arquivos, avisos = _montar(args, raiz)
     acoes = instalar.planejar(arquivos, instalar.ler_manifesto(cam.manifesto), cam.home)
+    avisos += validate.avisos_do_install(cfg, cam)
     avisos += panel.avisos_do_install({a.rel for a in acoes if a.tipo == instalar.REMOVER}, cam,
                                       {a.rel for a in acoes if a.tipo in (instalar.CRIAR, instalar.ATUALIZAR)
                                        or (a.tipo == instalar.CONFLITO and args.force)})
@@ -260,6 +314,8 @@ def cmd_install(args, raiz):
 def cmd_uninstall(args, raiz):
     cam = _caminhos(args)
     acoes = instalar.planejar_remocao(instalar.ler_manifesto(cam.manifesto), cam.home)
+    for a in validate.avisos_do_uninstall(cam):
+        print(f"aviso: {a}")
     print(f"fluxo uninstall em {cam.home}:")
     print(instalar.resumo(acoes))
     if args.dry_run:
@@ -381,6 +437,17 @@ def parser():
     p.add_argument("--target", help="enable no WSL: sessão do tmux onde abrir a janela do watch")
     p.set_defaults(fn=cmd_watch)
 
+    p = sub.add_parser("validate", help="o pr-reviewer (módulo validate): enable clona, start revisa em segundo plano, status acompanha")
+    p.add_argument("acao", choices=("enable", "disable", "exec", "start", "status", "stop", "_rodar"))
+    p.add_argument("alvo", nargs="?", metavar="ID", help="start/status/stop: a tarefa (ou --recipe <repo>)")
+    p.add_argument("--profile", default="local", help="enable: o perfil da config do pr-reviewer que ele cria (padrão: local)")
+    p.add_argument("--recipe", metavar="REPO", help="start/status/stop: o runbook do repo, em vez da revisão da tarefa")
+    p.add_argument("--fix", action="store_true", help="start --recipe: refaz com o último --check que falhou")
+    p.add_argument("--check", action="store_true", help="start --recipe: sobe o stack com o runbook do perfil")
+    p.add_argument("--backend", choices=cfgmod.TOOLS, help="start: a ferramenta dos agentes do pr-review (no copilot, vale o backend da config do pr-reviewer)")
+    p.add_argument("--wait", type=int, default=0, help="status: segundos esperando terminar (até 540)")
+    p.set_defaults(fn=cmd_validate)
+
     p = sub.add_parser("hook", help="(chamado pelas ferramentas) grava um evento para o painel")
     p.add_argument("--tool", required=True)
     p.add_argument("--event", default="")
@@ -399,7 +466,7 @@ def parser():
     p.add_argument("--hash", metavar="TERM", help="só imprime o hash do termo, para o tests/proibidos.sha256")
     p.set_defaults(fn=cmd_scan)
 
-    for nome in ("init", "install", "uninstall", "doctor", "modules", "task", "msg", "lock", "watch", "hook", "panel"):
+    for nome in ("init", "install", "uninstall", "doctor", "modules", "task", "msg", "lock", "watch", "hook", "panel", "validate"):
         sub.choices[nome].add_argument("--home", help="usa esta pasta no lugar do HOME para config, dados e "
                                        "arquivos instalados (teste); o tmux e o ~ do code_dir continuam os reais")
     return ap
@@ -421,7 +488,7 @@ def main(argv, raiz):
     argv, comando = list(argv), []
     if argv[:1] == ["hook"]:
         return _hook(argv, raiz)
-    if argv[:2] == ["lock", "run"] and "--" in argv:  # `fluxo lock run --id X -- docker compose up`
+    if argv[:2] in (["lock", "run"], ["validate", "exec"]) and "--" in argv:  # `fluxo lock run --id X -- docker compose up`
         i = argv.index("--")
         argv, comando = argv[:i], argv[i + 1:]
     args = parser().parse_args(argv)

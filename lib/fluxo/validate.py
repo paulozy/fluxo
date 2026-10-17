@@ -455,3 +455,54 @@ def _resumo_receita(pasta, fim, logs):
     if r.get("status") == "pending":
         linhas.append(f"para gravar, depois do OK: fluxo validate exec -- recipe {r.get('repo')} --apply={r.get('proposal')} --confirm={r.get('confirm')}")
     return linhas + [logs]
+
+
+# ── doctor ───────────────────────────────────────────────────────────────────
+
+NODE_MINIMO = (22, 18)  # o type stripping ligado e sem aviso: o pr-reviewer roda o .ts direto
+
+
+def checar(cfg, cam, run, which, env):
+    """As checagens do módulo, no formato do doctor: [(nível, texto)]. Não roda o `pr-review doctor`, que chama
+    agente de verdade: só sugere."""
+    from .doctor import AVISO, FALHA, OK, _rodar  # o doctor importa este módulo
+    out = []
+    if not which("node"):
+        out.append((FALHA, "node não está no PATH: o pr-reviewer roda em Node 22.18 ou mais novo"))
+    else:
+        cod, saida = _rodar(run, ["node", "--version"])
+        m = re.match(r"v(\d+)\.(\d+)", saida.strip())
+        if cod != 0 or not m:
+            out.append((AVISO, f"node --version não respondeu: {saida.strip()[:80]}"))
+        elif (int(m.group(1)), int(m.group(2))) < NODE_MINIMO:
+            out.append((FALHA, f"node {saida.strip()}: o pr-reviewer precisa do 22.18 ou mais novo"))
+        else:
+            out.append((OK, f"node {saida.strip()}"))
+    out.append((OK, "docker") if which("docker") else
+               (AVISO, "docker não está no PATH: o /validar fica só com a revisão estática"))
+    estado = _ler(cam.estado / ESTADO)
+    clone = Path(estado["dir"]) if estado.get("dir") else pasta(cfg, cam)
+    if not estado:
+        out.append((AVISO, "o pr-reviewer não foi trazido: rode `fluxo validate enable`"))
+    elif estado.get("proprio"):
+        out.append((OK, f"pr-reviewer: o seu clone em {clone}"))
+    else:
+        cod, saida = _rodar(run, ["git", "-C", str(clone), "rev-parse", "HEAD"])
+        if cod == 0 and saida.strip() == PR_REVIEWER["sha"]:
+            out.append((OK, f"pr-reviewer {PR_REVIEWER['tag']} em {clone}"))
+        else:
+            out.append((AVISO, f"o clone em {clone} não está na {PR_REVIEWER['tag']} que esta versão do fluxo usa: "
+                               "rode `fluxo validate enable`"))
+    conf = config_pr_reviewer(cam, env)
+    dados = _ler(conf)
+    raiz = os.path.expanduser(cfg["code_dir"])
+    if not dados:
+        out.append((AVISO, f"{conf} não existe ou não é JSON: rode `fluxo validate enable`"))
+    elif os.path.normpath(os.path.expanduser(str(dados.get("workspaceRoot", "")))) != os.path.normpath(raiz):
+        out.append((AVISO, f"o workspaceRoot do pr-reviewer ({dados.get('workspaceRoot')}) não é o code_dir do fluxo "
+                           f"({raiz}): o /validar não acharia os repos"))
+    else:
+        out.append((OK, f"config do pr-reviewer em {conf}"))
+    if estado:
+        out.append((OK, "para conferir os agentes de verdade (custa): fluxo validate exec -- doctor"))
+    return out

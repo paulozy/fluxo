@@ -11,6 +11,8 @@ from pathlib import Path
 
 from base import RAIZ, escrever_config
 from fluxo import cli, config, doctor, empacotar, montar
+from fluxo import validate as validate_mod
+import json
 
 
 class Resp:
@@ -135,6 +137,54 @@ class Doctor(unittest.TestCase):
                           env={"PATH": ""})
         self.assertTrue(any(n == doctor.AVISO and t.startswith("tmux não está") for n, t in r))
         self.assertNotIn(doctor.FALHA, [n for n, _ in r])
+
+    def validate(self, versao_node="v22.18.0", which=None, estado=None, conf=None, head=None):
+        cam = escrever_config(self.home, "claude", modules=["validate"], code_dir=str(self.home / "code"))
+        if estado is not None:
+            config.criar_estado(cam.estado)
+            (cam.estado / "pr-reviewer.json").write_text(json.dumps(estado))
+        if conf is not None:
+            destino = self.home / ".config" / "pr-reviewer" / "config.json"
+            destino.parent.mkdir(parents=True, exist_ok=True)
+            destino.write_text(json.dumps(conf))
+
+        def run(argv, **kw):  # um fake por argv: o de sempre devolve "1.0" para tudo
+            if argv[:2] == ["node", "--version"]:
+                return Resp(0, versao_node + "\n")
+            if argv[:1] == ["git"] and argv[-2:] == ["rev-parse", "HEAD"]:
+                return Resp(0, (head or validate_mod.PR_REVIEWER["sha"]) + "\n")
+            return Resp(0, "1.0\n")
+        r = doctor.checar(cam, RAIZ, cfg=config.carregar(cam, montar.modulos_existentes(RAIZ)),
+                          which=which or (lambda b: f"/usr/bin/{b}"), run=run, conectar=lambda *a: io.BytesIO(),
+                          versao=(3, 9), env={"PATH": ""})
+        return [(n, t) for n, t in r if any(p in t for p in ("node", "docker", "pr-reviewer", "workspaceRoot", "validate"))]
+
+    def test_validate_tudo_certo(self):
+        r = self.validate(estado={"dir": str(self.home / ".local/share/fluxo/pr-reviewer"), "sha": validate_mod.PR_REVIEWER["sha"]},
+                          conf={"workspaceRoot": str(self.home / "code")})
+        self.assertNotIn(doctor.FALHA, [n for n, _ in r], r)
+        self.assertNotIn(doctor.AVISO, [n for n, _ in r], r)
+        self.assertIn((doctor.OK, "node v22.18.0"), r)
+        self.assertTrue(any(t.startswith(f"pr-reviewer {validate_mod.PR_REVIEWER['tag']} em ") for _, t in r))
+        self.assertIn((doctor.OK, "para conferir os agentes de verdade (custa): fluxo validate exec -- doctor"), r)
+
+    def test_validate_node_velho_ou_ausente_e_falha(self):
+        self.assertIn((doctor.FALHA, "node v22.17.1: o pr-reviewer precisa do 22.18 ou mais novo"), self.validate("v22.17.1"))
+        self.assertIn((doctor.OK, "node v24.1.0"), self.validate("v24.1.0"))
+        self.assertIn((doctor.OK, "node v23.0.0"), self.validate("v23.0.0"), "a newer major with a lower minor")
+        sem = self.validate(which=lambda b: None if b == "node" else f"/usr/bin/{b}")
+        self.assertIn((doctor.FALHA, "node não está no PATH: o pr-reviewer roda em Node 22.18 ou mais novo"), sem)
+
+    def test_validate_avisa_o_que_falta_trazer_ou_acertar(self):
+        r = self.validate(which=lambda b: None if b == "docker" else f"/usr/bin/{b}")
+        self.assertIn((doctor.AVISO, "docker não está no PATH: o /validar fica só com a revisão estática"), r)
+        self.assertIn((doctor.AVISO, "o pr-reviewer não foi trazido: rode `fluxo validate enable`"), r)
+        self.assertTrue(any(n == doctor.AVISO and "não existe ou não é JSON" in t for n, t in r))
+        velho = self.validate(estado={"dir": "x", "sha": "a" * 40}, head="b" * 40, conf={"workspaceRoot": "/outro"})
+        self.assertTrue(any(n == doctor.AVISO and "não está na v" in t for n, t in velho), velho)
+        self.assertTrue(any(n == doctor.AVISO and "o workspaceRoot do pr-reviewer (/outro) não é o code_dir" in t for n, t in velho))
+        proprio = self.validate(estado={"dir": "/meu", "proprio": True}, conf={"workspaceRoot": str(self.home / "code")})
+        self.assertIn((doctor.OK, "pr-reviewer: o seu clone em /meu"), proprio)
 
     def test_sem_config_e_falha(self):
         cam = config.Caminhos(home=self.home)

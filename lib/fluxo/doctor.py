@@ -12,7 +12,7 @@ import sys
 from pathlib import Path
 
 from . import config as cfgmod
-from . import instalar, messages
+from . import instalar, messages, validate
 
 OK, AVISO, FALHA = "OK", "AVISO", "FALHA"
 BINARIOS = {"claude": "claude", "copilot": "copilot", "kiro": "kiro-cli", "codex": "codex"}
@@ -78,6 +78,8 @@ def checar(caminhos, raiz, cfg=None, erro_cfg=None, run=subprocess.run, which=sh
                     "tmux não está no PATH: o `fluxo task` precisa dele, e a trava usa o pane para saber se o dono vive"))
     if "messages" in modulos and messages.comando_copiar(cfg["os"], which) is None:
         out.append((AVISO, "sem pbcopy/clip.exe/wl-copy/xclip/xsel: o `fluxo msg` só vai guardar o texto, sem copiar"))
+    if "validate" in modulos:
+        out += validate.checar(cfg, caminhos, run, which, env)
 
     pasta_bin = str(caminhos.home / ".local" / "bin")
     if pasta_bin not in env.get("PATH", "").split(os.pathsep):

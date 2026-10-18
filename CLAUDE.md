@@ -18,12 +18,14 @@ instalado no nível do usuário e nunca escreve no repo da empresa.
 ```
 fluxo                 # entrada: põe lib/ no sys.path
 lib/fluxo/            # config, fonte (frontmatter), render (template), montar (função pura: fontes →
-                      # arquivos), instalar (manifesto), doctor, varredura, empacotar, cli
+                      # arquivos), instalar (manifesto), doctor, varredura, empacotar, assistente (o init
+                      # interativo), cli
 lib/fluxo/ferramentas # claude.py, copilot.py, kiro.py, codex.py: onde cada coisa mora e em que formato
 nucleo/               # fontes: instrucoes/NN-*.md, agentes/*.md, skills/<n>/SKILL.md
 adaptadores/          # dados: tools e modelos por ferramenta; variáveis por forge
 modulos/<n>/          # modulo.json (descricao, requer), instrucoes/, skills/, agentes/ do módulo:
-                      # task, messages, lock, reviewer, watch, panel, promote. O código fica em lib/fluxo/<n>.py
+                      # task, messages, lock, reviewer, watch, panel, promote, validate. O código fica em
+                      # lib/fluxo/<n>.py
                       # (arquivos fixos que o install grava: `arquivos_extras(cfg, Arquivo)`, uma vez
                       # por máquina, ex.: plist; `arquivos_da_ferramenta(cfg, tool, …)`, ex.: hooks)
 tests/esperado/       # golden: a árvore gerada em cada cenário (inclui Library/ e .config/systemd)

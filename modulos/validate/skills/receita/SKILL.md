@@ -19,8 +19,8 @@ O pedido: {{argumentos}}
   fora do sandbox, com a aprovação do usuário.
 <!-- fim -->
 <!-- se tool:copilot -->
-- No Copilot, o pr-reviewer ainda não roda os agentes dele aqui: a proposta usa o backend da config dele (o padrão
-  é o Claude), com o custo desse backend. Avise o usuário antes.
+- No Copilot, o agente da receita roda no próprio Copilot, com o login do keychain (no Linux, a sessão precisa do
+  D-Bus).
 <!-- fim -->
 
 ## 1. A proposta

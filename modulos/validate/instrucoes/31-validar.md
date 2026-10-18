@@ -15,6 +15,6 @@
 - Com o `{{skill.validar}}` no fluxo, o `{{skill.revisar-pr}}` fica para quando o usuário pedir.
 <!-- fim -->
 <!-- se tool:copilot -->
-- No Copilot, o pr-reviewer ainda não roda os agentes dele aqui: ele usa o backend da config dele (o padrão é o
-  Claude), com o custo desse backend.
+- No Copilot, os agentes do pr-reviewer rodam no próprio Copilot, com o login do keychain (no Linux, a sessão
+  precisa do D-Bus).
 <!-- fim -->

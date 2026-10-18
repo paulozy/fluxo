@@ -410,8 +410,8 @@ class Revisao(unittest.TestCase):
         clone = self.cam.dados / "pr-reviewer" / "bin" / "pr-review.ts"
         self.assertEqual(argv, ["node", str(clone), "--local", "api:feat/T1", "--base", "origin/develop", "--plan", str(self.plano), "--backend", "kiro"])
         self.assertEqual(avisos, [])
-        sem, _ = validate.preparar_revisao(self.cfg, self.cam, "T1", "copilot", run=rodar_git)
-        self.assertNotIn("--backend", sem, "the pr-reviewer has no copilot adapter: its config decides")
+        copilot, _ = validate.preparar_revisao(self.cfg, self.cam, "T1", "copilot", run=rodar_git)
+        self.assertEqual(copilot[-2:], ["--backend", "copilot"], "the pr-reviewer runs its agents on the copilot since the v0.6.0")
 
     def test_base_e_repos_do_plano_sao_conferidos(self):
         self.plano.write_text("---\nrepos: [api]\nbase: main\n---\n")
@@ -590,7 +590,7 @@ class Revisao(unittest.TestCase):
     def test_receita_monta_o_modo_e_o_backend(self):
         clone = str(self.cam.dados / "pr-reviewer" / "bin" / "pr-review.ts")
         self.assertEqual(validate.preparar_receita(self.cfg, self.cam, "api", "proposta", "codex"), ["node", clone, "recipe", "api", "--json", "--backend", "codex"])
-        self.assertEqual(validate.preparar_receita(self.cfg, self.cam, "api", "fix", "copilot"), ["node", clone, "recipe", "api", "--fix", "--json"])
+        self.assertEqual(validate.preparar_receita(self.cfg, self.cam, "api", "fix", "copilot"), ["node", clone, "recipe", "api", "--fix", "--json", "--backend", "copilot"])
         self.assertEqual(validate.preparar_receita(self.cfg, self.cam, "api", "check", "kiro"), ["node", clone, "recipe", "api", "--check", "--json"])
         with self.assertRaisesRegex(cfgmod.ErroConfig, "nome de repo inválido"):
             validate.preparar_receita(self.cfg, self.cam, "../x", "proposta", None)

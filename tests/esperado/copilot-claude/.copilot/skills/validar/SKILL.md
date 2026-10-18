@@ -26,8 +26,8 @@ O pedido: o texto que veio junto do comando (se não veio nada, pergunte)
 fluxo validate start <id> --backend copilot
 ```
 
-No Copilot, o pr-reviewer ainda não roda os agentes dele aqui: ele usa o backend da config dele (o padrão é o
-Claude), com o custo desse backend. Avise o usuário antes de rodar.
+No Copilot, os agentes do pr-reviewer rodam no próprio Copilot, com o login do keychain (no Linux, a sessão precisa
+do D-Bus). Um modelo muito barato pode deixar a revisão incompleta: ela nunca sai aprovada sem a leitura.
 
 Saída 2 é problema de uso (plano sem `repos`, worktree ausente, mudança não commitada): corrija e rode de
 novo.

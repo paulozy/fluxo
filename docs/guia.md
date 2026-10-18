@@ -596,8 +596,8 @@ fluxo validate status --recipe api
 
 **Por ferramenta:**
 - **Codex:** docker e rede ficam fora do sandbox, então a sessão pede para rodar cada `fluxo validate` fora dele.
-- **Copilot:** o pr-reviewer ainda não roda os agentes no Copilot. Vale o backend da config do pr-reviewer (o
-  padrão é o Claude), com o custo desse backend, e a skill avisa antes.
+- **Copilot:** os agentes do pr-reviewer rodam no próprio Copilot, com o login do keychain (no Linux, a sessão
+  precisa do D-Bus). Um modelo muito barato pode deixar a revisão incompleta, e ela nunca sai aprovada sem a leitura.
 
 ## 6. Duas ferramentas
 

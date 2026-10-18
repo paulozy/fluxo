@@ -182,7 +182,7 @@ class Formatos(unittest.TestCase):
         tudo, _ = gerar("copilot-tudo")
         validar = tudo[".copilot/skills/validar/SKILL.md"]
         self.assertIn("fluxo validate start <id> --backend copilot", validar)
-        self.assertIn("No Copilot, o pr-reviewer ainda não roda os agentes dele aqui", validar)
+        self.assertIn("No Copilot, os agentes do pr-reviewer rodam no próprio Copilot, com o login do keychain", validar)
         self.assertNotIn("fora do sandbox", validar)
         self.assertIn("Com o `/validar` no fluxo, o `/revisar-pr` fica para quando o usuário pedir.",
                       tudo[".copilot/instructions/fluxo.instructions.md"])
@@ -192,7 +192,7 @@ class Formatos(unittest.TestCase):
         for nome in ("validar", "receita"):
             self.assertIn("rode cada um\n  fora do sandbox, com a aprovação do usuário", codex[f".agents/skills/{nome}/SKILL.md"], nome)
         self.assertNotIn("fora do sandbox", tudo[".copilot/skills/receita/SKILL.md"])
-        self.assertIn("a proposta usa o backend da config dele", tudo[".copilot/skills/receita/SKILL.md"])
+        self.assertIn("o agente da receita roda no próprio Copilot, com o login do keychain", tudo[".copilot/skills/receita/SKILL.md"])
         self.assertNotIn("revisar-pr", codex[".codex/AGENTS.md"] if ".codex/AGENTS.md" in codex else "", "without reviewer, no pointer to it")
         sem, _ = gerar("claude")
         self.assertNotIn(".claude/skills/validar/SKILL.md", sem)

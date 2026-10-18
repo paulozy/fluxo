@@ -188,7 +188,7 @@ def carregar(caminhos, modulos_existentes=()):
     try:
         bruto = json.loads(caminhos.config.read_text(encoding="utf-8"))
     except FileNotFoundError:
-        raise ErroConfig(f"sem config em {caminhos.config}: rode `fluxo init --tool … --forge …`")
+        raise ErroConfig(f"sem config em {caminhos.config}: rode `fluxo init`")
     except ValueError as exc:
         raise ErroConfig(f"{caminhos.config} não é JSON válido: {exc}")
     return validar(bruto, modulos_existentes)

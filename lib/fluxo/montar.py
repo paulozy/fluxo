@@ -69,6 +69,11 @@ def modulos_da_ferramenta(cfg, tool, raiz):
     return out
 
 
+def atende(cfg, modulo, raiz):
+    """Alguma ferramenta de `tools` atende o `requer` do módulo? (o init interativo recusa o que não serve)"""
+    return any(modulos_da_ferramenta(dict(cfg, modules=[modulo]), t, raiz) for t in cfg["tools"])
+
+
 def contexto(cfg, tool, raiz, caminhos, modulos):
     adapt = _json(Path(raiz) / "adaptadores" / "ferramenta" / f"{tool}.json")
     forge = dict(_json(Path(raiz) / "adaptadores" / "forge" / f"{cfg['forge']}.json"))

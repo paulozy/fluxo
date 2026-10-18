@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.10.0] — 2026-10-18
+
+### Mudado
+
+- **O `validate` fixa o pr-reviewer v0.6.0,** que roda os agentes também no Copilot CLI. O `fluxo validate enable`
+  leva o clone para a tag nova, nas condições de sempre (um clone com algo seu não é tocado).
+- **No Copilot, o `/validar` e o `/receita` passam `--backend copilot`.** Antes, o pr-reviewer usava o backend da
+  config dele (o padrão era o Claude). O login vem do keychain; no Linux, a sessão precisa do D-Bus.
+
 ## [0.9.0] — 2026-10-17
 
 ### Adicionado

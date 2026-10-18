@@ -142,8 +142,8 @@ na config: o fluxo nunca mexe nele.
   derruba o stack antes de sair.
 - `fluxo validate exec -- <args>` roda o pr-reviewer do clone (o `--apply` da receita vai por ele).
 
-No Copilot, o pr-reviewer ainda não roda os agentes dele: vale o backend da config do pr-reviewer (o padrão é
-o Claude), com o custo desse backend.
+No Copilot, os agentes do pr-reviewer rodam no próprio Copilot, com o login do keychain (no Linux, a sessão precisa
+do D-Bus). Um modelo muito barato pode deixar a revisão incompleta, e ela nunca sai aprovada sem a leitura.
 
 ## Duas ferramentas
 

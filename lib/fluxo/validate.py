@@ -27,8 +27,8 @@ PR_REVIEWER = {
     # HTTPS: o fluxo já usa o gh, e o `gh auth setup-git` libera o clone de um repo privado; quem usa ssh redireciona
     # com um insteadOf
     "url": "https://github.com/paulozy/pr-reviewer-core.git",
-    "tag": "v0.5.0",
-    "sha": "d10f37c88c4a073a492755017902c9730eff677e",
+    "tag": "v0.6.0",
+    "sha": "17351992631ca50d1ef35ec0c9059c2323701ed5",
 }
 ESTADO = "pr-reviewer.json"
 TIMEOUT = 300
@@ -348,7 +348,6 @@ def avisos_do_uninstall(cam):
 # solta a trava depois que ele termina. O `status` acompanha e o `stop` cancela o grupo inteiro. A trava ocupada
 # nunca se confunde com a saída 4 do pr-review, que é REPROVAR.
 
-SEM_ADAPTADOR = {"copilot"}  # o pr-reviewer ainda não roda os agentes nela: vale o backend da config dele
 ESPERA = 3600
 TIPOS = ("revisao", "receita")
 NOME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,60}$")
@@ -380,7 +379,8 @@ def _rodando(pasta):
 
 
 def _backend(backend):
-    return [] if not backend or backend in SEM_ADAPTADOR else ["--backend", backend]
+    # a ferramenta da sessão roda os agentes do pr-reviewer: claude, kiro, codex ou copilot (este desde a v0.6.0)
+    return ["--backend", backend] if backend else []
 
 
 def preparar_revisao(cfg, cam, id_, backend, run=subprocess.run, env=None):

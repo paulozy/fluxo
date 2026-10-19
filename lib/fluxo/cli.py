@@ -1,13 +1,14 @@
 """Linha de comando do fluxo.
 
-Saídas: 0 ok; 1 erro; 2 config ou uso inválido; 3 conflito (nada foi gravado); 130 o init interativo
-cancelado (EOF ou Ctrl-C).
+Saídas: 0 ok; 1 erro; 2 config ou uso inválido; 3 conflito (nada foi gravado); 130 uma pergunta cancelada (EOF
+ou Ctrl-C), no init ou num menu.
 """
 import argparse
 import contextlib
 import io
 import json
 import os
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -28,6 +29,29 @@ def _carregar(args, raiz, modulo=None):
     if modulo and modulo not in cfg["modules"]:
         raise cfgmod.ErroConfig(f"o módulo {modulo} está desligado: fluxo modules --enable {modulo} && fluxo install")
     return cam, cfg
+
+
+def _perguntas(args, ler, saida, interativo):
+    """As Perguntas, se dá para perguntar aqui; senão None, e o comando segue com o erro de sempre."""
+    if interativo is None:
+        interativo = assistente.pode_perguntar(args, sys.stdin, sys.stdout, os.environ)
+    return assistente.Perguntas(ler, saida or sys.stderr) if interativo else None
+
+
+def _dica(args):
+    """O fim da mensagem quando falta algo e não deu para perguntar."""
+    motivo = assistente.desligado(args, os.environ)
+    return f"{motivo} desliga as perguntas" if motivo else "ou rode num terminal para escolher"
+
+
+def _o_mesmo(perguntas, argv):
+    """O comando que faz o mesmo sem o menu, para a próxima vez."""
+    perguntas.escrever("o mesmo, sem menu: " + shlex.join(["fluxo", *argv]))
+
+
+def _cancelado(perguntas, o_que):
+    perguntas.escrever(f"\ncancelado; {o_que}")
+    return 130
 
 
 def _adaptador(raiz, tool):
@@ -435,7 +459,7 @@ def parser():
     p.add_argument("--promote-to", help="módulo promote: as bases depois da --base, em ordem (ex.: staging,main)")
     p.add_argument("--force", action="store_true")
     p.add_argument("--no-input", action="store_true",
-                   help="nunca pergunta: sem --tool e --forge, sai com erro (também com CI definida ou TERM=dumb)")
+                   help="nunca pergunta: sem --tool e --forge, sai com erro (também com CI definida, TERM=dumb ou num agente)")
     p.set_defaults(fn=cmd_init, modulos=None)
 
     p = sub.add_parser("install", help="grava instruções, agentes e skills no nível do usuário")
@@ -525,6 +549,10 @@ def parser():
     for nome in ("init", "install", "uninstall", "doctor", "modules", "task", "msg", "lock", "watch", "hook", "panel", "validate"):
         sub.choices[nome].add_argument("--home", help="usa esta pasta no lugar do HOME para config, dados e "
                                        "arquivos instalados (teste); o tmux e o ~ do code_dir continuam os reais")
+    for nome in ("modules", "task", "validate"):
+        sub.choices[nome].add_argument("--no-input", action="store_true",
+                                       help="nunca abre o menu: o que faltar vira erro (também com CI definida, "
+                                       "TERM=dumb ou num agente)")
     return ap
 
 

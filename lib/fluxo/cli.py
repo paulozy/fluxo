@@ -59,12 +59,11 @@ def _adaptador(raiz, tool):
 
 
 def _config_bruta(cam):
+    """(config como está no arquivo, os bytes lidos), para editar e regravar com o cfgmod.gravar_json."""
     try:
-        return json.loads(cam.config.read_text(encoding="utf-8"))
+        return cfgmod.ler_json(cam.config)
     except FileNotFoundError:
-        raise cfgmod.ErroConfig(f"sem config em {cam.config}: rode `fluxo init` antes")
-    except ValueError as exc:
-        raise cfgmod.ErroConfig(f"{cam.config} não é JSON válido: {exc}")
+        raise cfgmod.ErroConfig(f"sem config em {cam.config}: rode `fluxo init` antes") from None
 
 
 def cmd_modules(args, raiz, ler=input, saida=None, interativo=None):
@@ -76,11 +75,10 @@ def cmd_modules(args, raiz, ler=input, saida=None, interativo=None):
         if not perguntas:
             print(f"fluxo modules: {' e '.join(vazias)} sem módulo ({_dica(args)})", file=sys.stderr)
             return 2
-        bruto = _config_bruta(cam)
-        antes = bruto.get("modules") if isinstance(bruto, dict) and isinstance(bruto.get("modules"), list) else []
+        bruto, _ = _config_bruta(cam)
+        antes = bruto.get("modules") if isinstance(bruto.get("modules"), list) else []
         # um módulo que não existe mais (de uma versão antiga) não impede o menu, e o --disable o oferece
-        cfg = cfgmod.validar(dict(bruto, modules=[m for m in antes if m in existentes]) if isinstance(bruto, dict)
-                             else bruto, existentes)
+        cfg = cfgmod.validar(dict(bruto, modules=[m for m in antes if m in existentes]), existentes)
         extintos = [m for m in antes if m not in existentes]
         try:
             for flag in ("enable", "disable"):
@@ -96,14 +94,12 @@ def cmd_modules(args, raiz, ler=input, saida=None, interativo=None):
                              *(["--disable", *args.disable] if args.disable else []),
                              *(["--home", args.home] if args.home else [])])
     if args.enable or args.disable:
-        bruto = _config_bruta(cam)
+        bruto, lido = _config_bruta(cam)
         ligados = [m for m in bruto.get("modules", []) if m not in (args.disable or [])]
         ligados = list(dict.fromkeys(ligados + list(args.enable or [])))  # sem repetir: duplicaria as instruções
         bruto["modules"] = ligados
         cfgmod.validar(bruto, existentes)  # módulo inexistente não chega ao arquivo
-        tmp = cam.config.with_name(".config.json.tmp")
-        tmp.write_text(json.dumps(bruto, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-        os.replace(tmp, cam.config)
+        cfgmod.gravar_json(cam.config, bruto, antes=lido)
         print(f"módulos ligados: {', '.join(ligados) or 'nenhum'}. Agora: fluxo install")
         return 0
     cfg = cfgmod.carregar(cam, existentes)
@@ -429,9 +425,7 @@ def cmd_init(args, raiz, ler=input, saida=None, interativo=None):
             print("\ncancelado; nada foi gravado", file=saida)
             return 130
     cam.config_dir.mkdir(parents=True, exist_ok=True)
-    tmp = cam.config.with_name(".config.json.tmp")  # refazer é o caminho comum: um Ctrl-C não deixa meio arquivo
-    tmp.write_text(texto, encoding="utf-8")
-    os.replace(tmp, cam.config)
+    cfgmod.gravar_json(cam.config, cfg)  # refazer é o caminho comum: um Ctrl-C não deixa meio arquivo
     if not perguntando:
         print(f"config gravada em {cam.config}. Agora: fluxo install --dry-run")
         return 0

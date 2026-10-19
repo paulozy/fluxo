@@ -6,6 +6,8 @@ import json
 import os
 import platform
 import re
+import stat
+import tempfile
 from pathlib import Path
 
 TOOLS = ("claude", "copilot", "kiro", "codex")  # a primeira de `tools` na config é a padrão do `fluxo task`
@@ -192,3 +194,67 @@ def carregar(caminhos, modulos_existentes=()):
     except ValueError as exc:
         raise ErroConfig(f"{caminhos.config} não é JSON válido: {exc}")
     return validar(bruto, modulos_existentes)
+
+
+def _sem_repetir(pares):
+    out = {}
+    for chave, valor in pares:
+        if chave in out:  # o json ficaria com a última, em silêncio
+            raise ValueError(f"a chave {chave!r} aparece duas vezes")
+        out[chave] = valor
+    return out
+
+
+def ler_json(caminho):
+    """(objeto, bytes lidos) de um JSON para editar e regravar com gravar_json. Recusa JSON inválido, chave repetida
+    e raiz que não é objeto (ErroConfig); um arquivo que não existe levanta FileNotFoundError."""
+    lido = Path(caminho).read_bytes()
+    try:
+        dados = json.loads(lido.decode("utf-8"), object_pairs_hook=_sem_repetir)
+    except json.JSONDecodeError as exc:
+        raise ErroConfig(f"{caminho} não é JSON válido (linha {exc.lineno}, coluna {exc.colno}: {exc.msg})") from None
+    except (ValueError, UnicodeDecodeError) as exc:
+        raise ErroConfig(f"{caminho}: {exc}") from None
+    if not isinstance(dados, dict):
+        raise ErroConfig(f"{caminho}: a raiz precisa ser um objeto JSON")
+    return dados, lido
+
+
+def gravar_json(caminho, dados, antes=None, modo=0o600):
+    """Grava sem deixar o arquivo pela metade. Segue o link (a config pode ser um link do dotfiles, e o os.replace
+    trocaria o link por um arquivo comum), mantém o modo do original (`modo` só vale para um arquivo novo) e, com
+    `antes` (os bytes do ler_json), recusa se o arquivo mudou no meio."""
+    alvo = Path(os.path.realpath(caminho))
+    try:
+        modo = stat.S_IMODE(alvo.stat().st_mode)
+    except FileNotFoundError:
+        pass
+    fd, tmp = tempfile.mkstemp(prefix=f".{alvo.name}.", suffix=".tmp", dir=str(alvo.parent))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            os.fchmod(fh.fileno(), modo)
+            fh.write(json.dumps(dados, ensure_ascii=False, indent=2) + "\n")
+            fh.flush()
+            os.fsync(fh.fileno())
+        if antes is not None:
+            try:
+                agora = alvo.read_bytes()
+            except FileNotFoundError:
+                agora = None
+            if agora != antes:
+                raise ErroConfig(f"{caminho} mudou enquanto era editado; nada foi gravado")
+        os.replace(tmp, alvo)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except FileNotFoundError:
+            pass
+        raise
+    try:  # o rename só fica no disco com o fsync da pasta
+        pasta = os.open(str(alvo.parent), os.O_RDONLY)
+        try:
+            os.fsync(pasta)
+        finally:
+            os.close(pasta)
+    except OSError:
+        pass

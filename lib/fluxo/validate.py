@@ -198,6 +198,8 @@ def criar_config(cfg, cam, env, profile):
         "primaryBase": cfg["git"]["base"],
         "defaultBase": f"origin/{cfg['git']['base']}",
         "profile": profile,
+        # sem ele, o pr-reviewer roda os agentes no claude -p, que pode nem estar nesta máquina
+        "backend": cfg["tools"][0],
     }
     if _criar_exclusivo(destino, json.dumps(conteudo, indent=2, ensure_ascii=False) + "\n", 0o600):
         return f"config do pr-reviewer criada em {destino} (perfil {profile})"

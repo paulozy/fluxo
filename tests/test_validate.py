@@ -90,7 +90,7 @@ class EnableDisable(unittest.TestCase):
         self.assertFalse([p for p in self.clone.parent.iterdir() if p.name.startswith(".pr-reviewer.")], "no temp dir left")
         conf = json.loads(self.config_pr.read_text())
         self.assertEqual(conf, {"workspaceRoot": os.path.expanduser("~/code-de-teste"), "primaryBase": "develop",
-                                "defaultBase": "origin/develop", "profile": "local"})
+                                "defaultBase": "origin/develop", "profile": "local", "backend": "claude"})
         self.assertEqual(stat.S_IMODE(self.config_pr.stat().st_mode), 0o600)
         self.assertEqual(stat.S_IMODE(self.config_pr.parent.stat().st_mode), 0o700)
         self.assertEqual(self.bin.read_text(), validate.wrapper(self.clone))

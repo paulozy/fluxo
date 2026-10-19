@@ -154,12 +154,13 @@ Os hooks e o `curses` da sua máquina decidem o que as abas mostram. O que a doc
 | # | Teste | Esperado | Se falhar |
 |---|---|---|---|
 | V1 | `fluxo modules --enable validate && fluxo install` | o aviso "rode `fluxo validate enable`" | sem aviso: confira o módulo na config |
-| V2 | `fluxo validate enable` numa máquina com o `gh` logado | o clone na v0.6.0, a config do pr-reviewer e o comando `pr-review` | "Authentication failed" ou "could not read Username": `gh auth setup-git`; com ssh, o `insteadOf` do README e `ssh -T git@github.com` |
+| V2 | `fluxo validate enable` numa máquina com o `gh` logado | o clone na v0.6.1, a config do pr-reviewer e o comando `pr-review` | "Authentication failed" ou "could not read Username": `gh auth setup-git`; com ssh, o `insteadOf` do README e `ssh -T git@github.com` |
 | V3 | `fluxo doctor` | as linhas do node, do docker, do pr-reviewer e da config | node abaixo de 22.18: atualize; o `workspaceRoot` diferente do `code_dir`: acerte a config do pr-reviewer |
 | V4 | `/validar <id>` numa tarefa pequena, em cada ferramenta | o `start` em segundo plano e o `status --wait 100` repetido até o veredito | a ferramenta mata o comando antes de 100 s (no Claude o padrão é 120 s): avise, para o `--wait` diminuir |
 | V5 | Codex: o `/validar` e o `/receita` | pedem a aprovação para rodar cada `fluxo validate` fora do sandbox (o `stop` também, no macOS) | rodam dentro e falham ao gravar no estado, no docker ou na rede: avise |
 | V6 | Copilot: o `/validar` | o pr-review roda com `--backend copilot`, e o `doctor --backend=copilot` dele passa | "não leu o login do keychain": destrave o keyring ou rode `copilot login`; "o modelo não chamou nenhuma ferramenta": troque o modelo do `backends.copilot` |
 | V7 | `/receita <repo>` num repo sem runbook | mostra o resumo e o diff, pergunta, e só grava com o ok, pelo `--apply … --confirm=` | grava sem perguntar: pare e avise |
+| V8 | No Mac com o Copilot: `fluxo validate enable`, depois `fluxo validate doctor` | o doctor passa no login do keychain e na sonda (de 6 a 7 créditos), sem diálogo do macOS na tela | "No authentication information found": confira se o clone está na v0.6.1 (`fluxo doctor`); um diálogo pedindo acesso ao keychain: clique em Negar e avise |
 
 ## Menus interativos (v0.11.0)
 

@@ -27,8 +27,8 @@ PR_REVIEWER = {
     # HTTPS: o fluxo já usa o gh, e o `gh auth setup-git` libera o clone de um repo privado; quem usa ssh redireciona
     # com um insteadOf
     "url": "https://github.com/paulozy/pr-reviewer-core.git",
-    "tag": "v0.6.0",
-    "sha": "17351992631ca50d1ef35ec0c9059c2323701ed5",
+    "tag": "v0.6.1",
+    "sha": "809fc7bb8c4ddc6ad57eed3844ac42b4ccce093c",
 }
 ESTADO = "pr-reviewer.json"
 TIMEOUT = 300

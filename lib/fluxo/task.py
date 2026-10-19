@@ -25,6 +25,7 @@ from . import tmux
 ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$")
 NOME_RE = re.compile(r"^[a-z][a-z0-9-]{1,29}$")
 RESERVADOS = ("watch", "panel")  # janelas que o próprio fluxo abre
+DE_TAREFA = ("planejar", "implementar", "concluir")  # as skills que exigem o ID
 OCUPADO = 4
 SUBIR = 3.0  # segundos até conferir que a ferramenta não caiu ao abrir (o Copilot é Node: demora a falhar)
 
@@ -64,7 +65,13 @@ def nome_do_prompt(prompt, prefixo="/", skills=None):
     return nome if NOME_RE.fullmatch(nome) and nome not in RESERVADOS else None
 
 
-def _barra_no_lugar_do_prefixo(prompt, prefixo, skills):
+def skill_de_tarefa(prompt, prefixo="/"):
+    """A skill de DE_TAREFA com que o prompt começa, ou None."""
+    m = re.match(r"\s*" + re.escape(prefixo) + r"(" + "|".join(DE_TAREFA) + r")\b", prompt or "")
+    return m.group(1) if m else None
+
+
+def barra_no_lugar_do_prefixo(prompt, prefixo, skills):
     """No Codex a skill é `$implementar`: o `/implementar` das outras ferramentas iria como texto, e a
     sessão abriria sem rodar a skill."""
     m = re.match(r"\s*/([\w-]+)", prompt or "")
@@ -75,7 +82,7 @@ def _barra_no_lugar_do_prefixo(prompt, prefixo, skills):
 def resolver(id_, prompt, nome, prefixo="/", skills=None):
     """Valida e devolve (kind, nome, prompt, sufixar). Levanta ErroUso. `prefixo` é o da chamada de
     skill na ferramenta (o `prefixo` do adaptador); `skills`, os nomes delas."""
-    _barra_no_lugar_do_prefixo(prompt, prefixo, skills)
+    barra_no_lugar_do_prefixo(prompt, prefixo, skills)
     if id_ is not None:
         if not ID_RE.fullmatch(id_):
             raise ErroUso(f"id {id_!r} inválido: letras, números, ponto, hífen e sublinhado, até 40")
@@ -84,7 +91,7 @@ def resolver(id_, prompt, nome, prefixo="/", skills=None):
         return "task", id_, prompt or f"{prefixo}planejar {id_}", False
     if not (prompt or "").strip():
         raise ErroUso("informe o ID da tarefa, ou -p \"…\" para uma sessão avulsa")
-    if re.match(r"\s*" + re.escape(prefixo) + r"(planejar|implementar|concluir)\b", prompt):
+    if skill_de_tarefa(prompt, prefixo):
         raise ErroUso(f"{prefixo}planejar, {prefixo}implementar e {prefixo}concluir são de uma tarefa: "
                       "fluxo task <ID> -p '…'")
     if nome:

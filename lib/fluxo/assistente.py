@@ -18,7 +18,7 @@ import sys
 from pathlib import Path
 
 from . import config as cfgmod
-from . import montar
+from . import montar, task
 
 
 class Cancelado(Exception):
@@ -179,6 +179,46 @@ def _bases(base):
 def _binario(raiz, tool):
     adapt = json.loads((Path(raiz) / "adaptadores" / "ferramenta" / f"{tool}.json").read_text(encoding="utf-8"))
     return adapt["lancar"][0]
+
+
+def menu_task(p, prefixo, skills, prompt=None, nome=None):
+    """O que falta ao `fluxo task` sem ID: a ação e o ID; só o prompt, com -n; ou só o ID, com um -p de tarefa.
+    Devolve (id, prompt), com o prompt None no planejar (vale o padrão). Levanta Cancelado."""
+    def valida_id(obrigatorio):
+        def valida(r):
+            if not r:
+                return "o ID é obrigatório aqui" if obrigatorio else None
+            return None if task.ID_RE.fullmatch(r) else "ID inválido: letras, números, ponto, hífen e sublinhado, até 40"
+        return valida
+
+    def valida_prompt(r):
+        if not r:
+            return "escreva o prompt"
+        try:
+            task.barra_no_lugar_do_prefixo(r, prefixo, skills)
+        except task.ErroUso as exc:
+            return str(exc)
+        if nome and task.skill_de_tarefa(r, prefixo):
+            return f"com -n a sessão é avulsa, e {prefixo}{task.skill_de_tarefa(r, prefixo)} é de uma tarefa"
+        return None
+
+    skill = task.skill_de_tarefa(prompt, prefixo)
+    if skill:  # `-p /implementar`: só a skill ganha o ID; com mais texto, o prompt fica como veio
+        id_ = p.texto(f"ID da tarefa do {prefixo}{skill}", None, valida_id(True))
+        return id_, f"{prefixo}{skill} {id_}" if prompt.strip() == prefixo + skill else prompt
+    if nome:
+        return None, p.texto("Prompt da sessão (uma linha)", None, valida_prompt)
+    notas = {s: f"{prefixo}{s} <ID>" for s in task.DE_TAREFA}
+    notas["planejar"] += " (o padrão com ID)"
+    notas["livre"] = "um prompt seu, com ID ou numa sessão avulsa"
+    acao = p.uma("Ação da sessão:", [*task.DE_TAREFA, "livre"], "planejar", notas)
+    if acao == "livre":
+        prompt = p.texto("Prompt (uma linha)", None, valida_prompt)
+        de_tarefa = bool(task.skill_de_tarefa(prompt, prefixo))
+        id_ = p.texto("ID da tarefa" + ("" if de_tarefa else " (vazio: sessão avulsa)"), None, valida_id(de_tarefa))
+        return id_ or None, prompt
+    id_ = p.texto("ID da tarefa", None, valida_id(True))
+    return id_, None if acao == "planejar" else f"{prefixo}{acao} {id_}"
 
 
 def notas_dos_modulos(cfg, modulos, raiz):

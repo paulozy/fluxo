@@ -84,7 +84,15 @@ def cmd_modules(args, raiz):
     return 0
 
 
-def cmd_task(args, raiz):
+def _argv_task(args):
+    argv = ["task", *([args.id] if args.id else [])]
+    for flag, valor in (("-p", args.prompt), ("-n", args.name), ("--tool", args.tool), ("--dir", args.dir),
+                        ("--target", args.target), ("--home", args.home)):
+        argv += [flag, valor] if valor else []
+    return argv + [flag for flag, ligada in (("--force", args.force), ("--dry-run", args.dry_run)) if ligada]
+
+
+def cmd_task(args, raiz, ler=input, saida=None, interativo=None):
     cam, cfg = _carregar(args, raiz, "task")
     if args.list:
         return task.listar(cam)
@@ -93,11 +101,23 @@ def cmd_task(args, raiz):
         print(f"fluxo task: {tool} não está em tools ({', '.join(cfg['tools'])}); acrescente na config e rode "
               "fluxo install", file=sys.stderr)
         return 2
+    adapt, skills = _adaptador(raiz, tool), montar.nomes_de_skills(raiz)
+    # sem ID, falta a ação (sem -p) ou o ID de um -p de tarefa; sem terminal, o resolver dá o erro de sempre
+    falta = args.id is None and (not (args.prompt or "").strip()
+                                 or (task.skill_de_tarefa(args.prompt, adapt["prefixo"]) and not args.name))
+    perguntas = _perguntas(args, ler, saida, interativo) if falta else None
+    if perguntas:
+        try:
+            args.id, args.prompt = assistente.menu_task(perguntas, adapt["prefixo"], skills,
+                                                        (args.prompt or "").strip() or None, args.name)
+        except (assistente.Cancelado, KeyboardInterrupt):
+            return _cancelado(perguntas, "nenhuma sessão foi aberta")
+        _o_mesmo(perguntas, _argv_task(args))
     pasta = Path(args.dir or os.path.expanduser(cfg["code_dir"]))
     try:
-        return task.abrir(args.id, args.prompt, args.name, cfg, tool, _adaptador(raiz, tool), cam, pasta, alvo=args.target,
+        return task.abrir(args.id, args.prompt, args.name, cfg, tool, adapt, cam, pasta, alvo=args.target,
                           forcar=args.force, dry_run=args.dry_run, dentro_do_tmux=bool(os.environ.get("TMUX")),
-                          skills=montar.nomes_de_skills(raiz))
+                          skills=skills)
     except task.ErroUso as exc:
         print(f"fluxo task: {exc}", file=sys.stderr)
         return 2

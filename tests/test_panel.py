@@ -370,7 +370,10 @@ class LigarKiroV2(unittest.TestCase):
             cfg = config.carregar(cam, montar.modulos_existentes(RAIZ))
             chamadas = []
             run = lambda argv, **kw: chamadas.append(argv) or subprocess.CompletedProcess(argv, 0, "", "")
-            self.assertEqual(panel.ligar(cfg, cam, run)[0], 0)
+            code, msg = panel.ligar(cfg, cam, run)  # sem terminal, a statusline do Copilot fica pendente
+            self.assertEqual(code, 1)
+            self.assertIn("rode fluxo panel enable num terminal", msg)
+            self.assertIn("agente fluxo é o padrão do Kiro agora", msg)
             self.assertEqual(chamadas[-1], ["kiro-cli", "agent", "set-default", "fluxo"])
 
 

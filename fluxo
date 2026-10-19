@@ -9,6 +9,10 @@ sys.path.insert(0, os.path.join(RAIZ, "lib"))
 if sys.version_info < (3, 9):
     sys.exit(f"fluxo: precisa do Python 3.9 ou mais novo (este é o {sys.version.split()[0]})")
 
+if sys.argv[1:2] == ["statusline"]:  # o Copilot roda a cada evento: sem importar o cli e os 20 módulos dele
+    from fluxo import uso  # noqa: E402
+    sys.exit(uso.statusline(sys.argv[2:]))
+
 from fluxo.cli import main  # noqa: E402
 
 sys.exit(main(sys.argv[1:], RAIZ))

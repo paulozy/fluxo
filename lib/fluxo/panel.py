@@ -21,7 +21,7 @@ import time
 from pathlib import Path
 
 from . import config as cfgmod
-from . import demo, lock, task, tmux, vistas, watch
+from . import demo, lock, task, tmux, uso, vistas, watch
 
 EVENTOS = {
     # sem permissionRequest: ele dispara antes das regras que liberam sozinhas, e não quer dizer que o
@@ -267,6 +267,13 @@ def podar(estado, agora=None, dias=GUARDA_DIAS):
                 p.unlink()
             except OSError:
                 pass
+    agora = agora or time.time()
+    for p in (Path(estado) / "uso").glob("*"):  # o uso de cada sessão, e o .tmp de uma statusline que morreu no meio
+        try:
+            if p.stat().st_mtime < agora - (3600 if p.suffix == ".tmp" else dias * 86400):
+                p.unlink()
+        except OSError:
+            pass
 
 
 class LeitorEventos:
@@ -329,11 +336,14 @@ class Coletor:
     LENTO = 5.0
     PID = 10.0  # o início do pid do dono da trava (o `ps` do Mac) no máximo a cada isso
 
-    def __init__(self, cam, ligados=(), run=None):
+    def __init__(self, cam, ligados=(), run=None, ferramentas=()):
         self.cam, self.ligados = cam, set(ligados)
         self.run = run
         self.eventos = LeitorEventos(cam.estado)
         self.acumulador = Acumulador()
+        # o uso, o modelo e a cota só existem no Copilot (lib/fluxo/uso.py)
+        self.copilot = uso.pastas_copilot(cam) if "copilot" in set(ferramentas) else None
+        self.leitor_copilot = uso.LeitorSessao()
         self._lento, self._lento_em, self._mtimes, self._pids, self._falhas = {}, -1e18, {}, {}, {}
 
     def _por_mtime(self, caminho, ler):
@@ -365,7 +375,8 @@ class Coletor:
     def _lentos(self, agora, vivos):
         """Uma fonte por vez: a que quebrar fica vazia e vira alerta, e as outras aparecem."""
         estado, dados = self.cam.estado, self.cam.dados
-        out = {"planos": {}, "revisoes": {}, "avisos": [], "vigia": {}, "trava": None, "erros_hook": []}
+        out = {"planos": {}, "revisoes": {}, "avisos": [], "vigia": {}, "trava": None, "erros_hook": [], "usos": {},
+               "modelos": {}}
         self._falhas = {}
 
         def fonte(nome, fazer):
@@ -406,7 +417,28 @@ class Coletor:
             desde = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(agora - 86400))
             out["erros_hook"] = [l for l in linhas if l[:19] >= desde]
 
+        def usos():
+            for p in sorted((estado / "uso").glob("*.json")):
+                registro = self._por_mtime(p, json.loads)
+                if isinstance(registro, dict) and registro.get("sessao"):
+                    out["usos"][registro["sessao"]] = registro
+
+        def modelos():  # das sessões que o painel conhece: as de hoje e de ontem
+            for sid, x in self.acumulador.s.items():
+                if x.get("ferramenta") == "copilot" and uso.ID.fullmatch(sid):
+                    info = self.leitor_copilot.ler(uso.eventos_da_sessao(self.copilot, sid, out["usos"].get(sid)))
+                    if info:
+                        out["modelos"][sid] = info
+
+        def cota():
+            out["cota"] = uso.ler_cota(self.copilot)
+
         fonte("planos", planos)
+        if self.copilot:
+            out["cota"] = None
+            fonte("uso", usos)
+            fonte("modelo", modelos)
+            fonte("cota", cota)
         if "reviewer" in self.ligados:
             fonte("revisões", revisoes)
         if "watch" in self.ligados:
@@ -421,19 +453,24 @@ class Coletor:
         agora = agora or time.time()
         if vivos is None:
             vivos = tmux.panes_vivos(self.run) if self.run else tmux.panes_vivos()
-        if agora - self._lento_em >= self.LENTO:
-            self._lento_em = agora  # mesmo que falhe: senão tudo seria relido a cada quadro
-            self._lento = self._lentos(agora, vivos)
         todos = self.eventos.ler(agora)
         if self.eventos.recomecou:  # virou o dia, ou um arquivo foi trocado: monta de novo
             self.acumulador = Acumulador()
             self.acumulador.aplicar(todos)
         else:
             self.acumulador.aplicar(self.eventos.novos)
+        if agora - self._lento_em >= self.LENTO:  # depois dos eventos: o modelo é lido das sessões que eles trouxeram
+            self._lento_em = agora  # mesmo que falhe: senão tudo seria relido a cada quadro
+            self._lento = self._lentos(agora, vivos)
         tarefas = task.vivas(self.cam.estado, vivos)  # pelo par pane + pane_pid
         # sem tmux, `vivos` vem vazio: aí nenhum pane conta como morto (senão tudo viraria "acabou")
-        return dict(self._lento, agora=agora, ligados=self.ligados,
-                    sessoes=self.acumulador.lista(tarefas, agora, vivos=vivos or None))
+        sessoes_ = self.acumulador.lista(tarefas, agora, vivos=vivos or None)
+        if self.copilot:
+            usos, modelos = self._lento.get("usos") or {}, self._lento.get("modelos") or {}
+            for x in sessoes_:
+                x["uso"] = (uso.ler_uso(usos.get(x["sessao"]), modelos.get(x["sessao"]))
+                            if x.get("ferramenta") == "copilot" else None)
+        return dict(self._lento, agora=agora, ligados=self.ligados, sessoes=sessoes_)
 
 
 def resolver_seguida(sessoes_, prefixo):
@@ -449,10 +486,10 @@ class _Demo:
         return demo.dados(agora)
 
 
-def texto(cam, ligados, tela, largura=100, altura=200, run=None, agora=None, de_mentira=False):
+def texto(cam, ligados, tela, largura=100, altura=200, run=None, agora=None, de_mentira=False, ferramentas=()):
     """O que o `fluxo panel --text` imprime: uma vista, uma vez, sem cor."""
     try:
-        dados = (_Demo() if de_mentira else Coletor(cam, ligados, run=run)).coletar(agora)
+        dados = (_Demo() if de_mentira else Coletor(cam, ligados, run=run, ferramentas=ferramentas)).coletar(agora)
         tela = dict(tela)
         if tela.get("seguida"):
             tela["seguida"] = resolver_seguida(dados["sessoes"], tela["seguida"])
@@ -517,7 +554,7 @@ def _atributos(curses, env=None):
     return attr
 
 
-def tela(cam, run, ligados=(), inicial=None, intervalo=1.0, de_mentira=False):
+def tela(cam, run, ligados=(), inicial=None, intervalo=1.0, de_mentira=False, ferramentas=()):
     """A tela em curses, com as 4 abas das vistas (lib/fluxo/vistas.py). Tudo o que ela desenha vem das
     vistas, e o que cada tecla faz vem de vistas.aplicar: aqui fica só o curses. `de_mentira`: o --demo."""
     import curses
@@ -534,7 +571,7 @@ def tela(cam, run, ligados=(), inicial=None, intervalo=1.0, de_mentira=False):
         codificacao = locale.getpreferredencoding(False)
     glifos = vistas.glifos_para(codificacao)
     em_ascii = glifos is vistas.GLIFOS_ASCII
-    coletor = _Demo() if de_mentira else Coletor(cam, ligados, run=run)
+    coletor = _Demo() if de_mentira else Coletor(cam, ligados, run=run, ferramentas=ferramentas)
     estado = dict({"aba": "list", "escolhida": None, "seguida": None, "fixada": False, "tarefa": None,
                    "rolagem": 0, "escondidas": set()}, **(inicial or {}))
 
@@ -620,7 +657,7 @@ def tela(cam, run, ligados=(), inicial=None, intervalo=1.0, de_mentira=False):
                 return 0
             except curses.error:
                 pass
-        print(texto(cam, ligados, estado, run=run, de_mentira=de_mentira))
+        print(texto(cam, ligados, estado, run=run, de_mentira=de_mentira, ferramentas=ferramentas))
         print(f"fluxo panel: o terminal não abriu a tela ({exc}); acima, a vista uma vez", file=sys.stderr)
     return 0
 
@@ -669,13 +706,21 @@ def arquivos_da_ferramenta(cfg, ferr, Arquivo, skills=(), **_):
     return [], []  # Claude: o requer do modulo.json o deixa de fora; lá o painel é o agent-tree
 
 
-def avisos_do_install(removidos, cam, gravados=()):
+def avisos_do_install(removidos, cam, gravados=(), cfg=None):
     """O que o install precisa dizer sobre os hooks.
 
     - Vai apagar o agente `fluxo` do Kiro, que o `panel enable` tinha feito padrão: sem o `disable`, o
       Kiro ficaria com um agente padrão que não existe.
-    - Vai criar ou mudar o `hooks.json` do Codex: lá, hook novo ou mudado só roda depois de aprovado."""
+    - Vai criar ou mudar o `hooks.json` do Codex: lá, hook novo ou mudado só roda depois de aprovado.
+    - O Copilot sem statusline nenhuma, com o panel: o gasto ao vivo fica de fora até o `panel enable`. E a
+      statusline do fluxo que ficou depois de o panel ou o Copilot saírem da config."""
     avisos = []
+    if cfg is not None:
+        estado, painel = uso.estado_da_statusline(uso.pastas_copilot(cam)), "panel" in cfg["modules"] and "copilot" in cfg["tools"]
+        if painel and estado is None:
+            avisos.append("panel no Copilot: fluxo panel enable liga a statusline, que leva o gasto e o contexto ao painel")
+        elif not painel and estado == "fluxo":
+            avisos.append("a statusline do Copilot ainda chama o fluxo: rode fluxo panel disable para tirá-la")
     if ".kiro/agents/fluxo.json" in removidos and (cam.estado / "painel-agente-anterior.txt").exists():
         avisos.append("o agente fluxo é o padrão do Kiro (fluxo panel enable): rode fluxo panel disable para devolver o anterior")
     if ".codex/hooks.json" in gravados:
@@ -683,7 +728,28 @@ def avisos_do_install(removidos, cam, gravados=()):
     return avisos
 
 
-def ligar(cfg, cam, run):
+def ligar(cfg, cam, run, perguntas=None):
+    """O Copilot precisa da statusline do fluxo no settings.json (lib/fluxo/uso.py), para o gasto ao vivo; o Kiro
+    V2, de tornar o agente `fluxo` o padrão; o Codex, de uma aprovação em /hooks, que é do usuário."""
+    code, msg = _ligar_kiro(cfg, cam, run)
+    if "copilot" not in cfg["tools"]:
+        return code, msg
+    code_copilot, msg_copilot = uso.ligar_statusline(uso.pastas_copilot(cam), perguntas)
+    return max(code, code_copilot), f"{msg_copilot}\n{msg.replace('nada a ligar: ', '')}"
+
+
+def desligar(cfg, cam, run):
+    """Tira a statusline do fluxo do Copilot e devolve o agente padrão do Kiro. Os dois decidem pelo que está no
+    disco, e não pela config: o Copilot pode já ter saído de `tools`."""
+    code, msg = _desligar_kiro(cfg, cam, run)
+    pastas = uso.pastas_copilot(cam)
+    if uso.estado_da_statusline(pastas) != "fluxo":
+        return code, msg
+    code_copilot, msg_copilot = uso.desligar_statusline(pastas)
+    return max(code, code_copilot), f"{msg_copilot}\n{msg.replace('nada a desligar: ', '')}"
+
+
+def _ligar_kiro(cfg, cam, run):
     """O Kiro V2 precisa de um passo: tornar o agente `fluxo` o padrão (e guardar o anterior). O Codex,
     de uma aprovação em /hooks, que é do usuário."""
     codex = "; no Codex, aprove os hooks em /hooks" if "codex" in cfg["tools"] else ""
@@ -698,7 +764,7 @@ def ligar(cfg, cam, run):
     return (0, "agente fluxo é o padrão do Kiro agora" + codex) if r.returncode == 0 else (1, f"kiro-cli: {r.stderr.strip()}")
 
 
-def desligar(cfg, cam, run):
+def _desligar_kiro(cfg, cam, run):
     """Devolve o agente padrão que o `ligar` guardou. Decide pelo que foi guardado, e não pela config:
     depois de tirar o kiro de `tools`, o engine v2 ou o módulo, o padrão do Kiro ainda é o `fluxo`."""
     guardado = cam.estado / "painel-agente-anterior.txt"

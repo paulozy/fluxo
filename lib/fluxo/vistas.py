@@ -238,7 +238,8 @@ def _cota_na_faixa(cota, agora, glifos):
 
 
 def _dia(ts):
-    return time.strftime("%d/%m", time.localtime(ts)) if ts else "--/--"
+    """O dia da renovação da cota em UTC: ela vira à meia-noite UTC do dia 1º, que no Brasil ainda é o dia 31."""
+    return time.strftime("%d/%m", time.gmtime(ts)) if ts else "--/--"
 
 
 def glifos_para(codificacao):
@@ -467,6 +468,8 @@ def _linhas_de_uso(x, glifos):
     partes = ([f"{fmt_numero(uso['creditos'])} créditos"] if uso.get("creditos") is not None else []) + \
              ([f"{fmt_numero(uso['premium'])} premium requests"] if uso.get("premium") else [])
     out.append([("gasto    ", "fraco"), (f"  {p}  ".join(partes) or "—", "titulo")])
+    if uso.get("fonte") != "statusline" and x.get("ferramenta") == "copilot":  # o modelo veio do events.jsonl
+        out.append([("o gasto e o contexto ao vivo vêm da statusline: fluxo panel enable", "fraco")])
     return out
 
 
@@ -504,7 +507,8 @@ def vista_sessao(dados, tela, largura, altura, glifos=GLIFOS_UTF8):
     maior, larg_barra = max((n for _, n in contagem), default=1), max(5, min(20, largura - 34))
     ferr = [[(preencher(limpo(nome, 40), 18) + " ", None)] + barra(n, maior, larg_barra, glifos) + [(f" {n}", "fraco")]
             for nome, n in contagem[:nf]] or [[("nenhuma ainda", "fraco")]]
-    canto_ferr = [(f"{sum(n for _, n in contagem)} chamadas", "fraco")] if contagem else []
+    total = sum(n for _, n in contagem)
+    canto_ferr = [(f"{total} {'chamada' if total == 1 else 'chamadas'}", "fraco")] if contagem else []
     out += caixa("ferramentas", ferr, largura, glifos, canto_ferr)
     linhas_sub = []
     for s in subs[-ns:]:  # cortando, ficam os mais novos

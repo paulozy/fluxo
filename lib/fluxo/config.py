@@ -48,6 +48,7 @@ class Caminhos:
         env = os.environ if env is None else env
         if home is not None and not str(home).strip():
             raise ErroConfig("--home vazio: passe uma pasta (o vazio cairia no HOME de verdade)")
+        self.isolado = bool(home)  # com --home, nada fora dele (nem o ~/.copilot de verdade)
         if home:
             self.home = Path(home).expanduser().resolve()
             self.config_dir = self.home / ".config" / "fluxo"
@@ -220,11 +221,12 @@ def ler_json(caminho):
     return dados, lido
 
 
-def gravar_json(caminho, dados, antes=None, modo=0o600):
+def gravar_json(caminho, dados, antes=None, modo=0o600, cabecalho=""):
     """Grava sem deixar o arquivo pela metade. Segue o link (a config pode ser um link do dotfiles, e o os.replace
     trocaria o link por um arquivo comum), mantém o modo do original (`modo` só vale para um arquivo novo) e, com
     `antes` (os bytes do ler_json), recusa se o arquivo mudou desde a leitura. É uma conferência, não uma trava: uma
-    gravação de outro processo entre ela e o rename ainda se perde."""
+    gravação de outro processo entre ela e o rename ainda se perde. `cabecalho`: as linhas de comentário // que
+    vão antes do JSON (os arquivos do Copilot têm)."""
     alvo = Path(os.path.realpath(caminho))
     try:
         modo = stat.S_IMODE(alvo.stat().st_mode)
@@ -234,7 +236,7 @@ def gravar_json(caminho, dados, antes=None, modo=0o600):
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             os.fchmod(fh.fileno(), modo)
-            fh.write(json.dumps(dados, ensure_ascii=False, indent=2) + "\n")
+            fh.write((cabecalho + "\n" if cabecalho else "") + json.dumps(dados, ensure_ascii=False, indent=2) + "\n")
             fh.flush()
             os.fsync(fh.fileno())
         if antes is not None:

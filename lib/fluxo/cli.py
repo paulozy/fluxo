@@ -14,7 +14,7 @@ import sys
 from pathlib import Path
 
 from . import config as cfgmod
-from . import assistente, doctor, empacotar, fonte, instalar, lock, messages, montar, panel, render, task, validate, varredura, vistas, watch
+from . import ajustes, assistente, doctor, empacotar, fonte, instalar, lock, messages, montar, panel, render, task, validate, varredura, vistas, watch
 
 ERROS_DE_USO = (cfgmod.ErroConfig, montar.ErroMontagem, render.ErroTemplate, fonte.ErroFonte)
 
@@ -47,6 +47,19 @@ def _dica(args):
 def _o_mesmo(perguntas, argv):
     """O comando que faz o mesmo sem o menu, para a próxima vez."""
     perguntas.escrever("o mesmo, sem menu: " + shlex.join(["fluxo", *argv]))
+
+
+def _oferecer_install(args, raiz, perguntas, feito):
+    """Depois de mudar o que os arquivos instalados usam: num terminal, pergunta se roda o install; sem, só avisa."""
+    if perguntas:
+        try:
+            rodar = perguntas.sim(f"{feito} Rodar fluxo install agora?", True)
+        except (assistente.Cancelado, KeyboardInterrupt):
+            rodar = False
+        if rodar:
+            return cmd_install(argparse.Namespace(dry_run=False, force=False, verbose=False, home=args.home), raiz)
+    print(f"{feito} Agora: fluxo install")
+    return 0
 
 
 def _cancelado(perguntas, o_que):
@@ -100,8 +113,8 @@ def cmd_modules(args, raiz, ler=input, saida=None, interativo=None):
         bruto["modules"] = ligados
         cfgmod.validar(bruto, existentes)  # módulo inexistente não chega ao arquivo
         cfgmod.gravar_json(cam.config, bruto, antes=lido)
-        print(f"módulos ligados: {', '.join(ligados) or 'nenhum'}. Agora: fluxo install")
-        return 0
+        return _oferecer_install(args, raiz, perguntas if vazias else _perguntas(args, ler, saida, interativo),
+                                 f"módulos ligados: {', '.join(ligados) or 'nenhum'}.")
     cfg = cfgmod.carregar(cam, existentes)
     for m in existentes:
         meta = json.loads((Path(raiz) / "modulos" / m / "modulo.json").read_text(encoding="utf-8"))
@@ -117,6 +130,71 @@ def _argv_task(args):
                         ("--home", args.home)):
         argv += [flag, valor] if valor else []
     return argv + [flag for flag, ligada in (("--force", args.force), ("--dry-run", args.dry_run)) if ligada]
+
+
+def _abrir_editor(caminho):
+    # a ordem do git (editor.c): VISUAL, que o TERM=dumb pula, EDITOR e vi; o caminho vai por "$@", fora do texto
+    editor = (os.environ.get("VISUAL") if os.environ.get("TERM") != "dumb" else None) or os.environ.get("EDITOR") or "vi"
+    subprocess.call(["sh", "-c", f'{editor} "$@"', "sh", str(caminho)])
+
+
+def cmd_config(args, raiz, ler=input, saida=None, interativo=None, abrir=_abrir_editor):
+    cam = _caminhos(args)
+    if args.acao == "path":
+        print(f"fluxo        {cam.config}")
+        print(f"pr-reviewer  {validate.config_pr_reviewer(cam, os.environ)}")
+        return 0
+    arqs = ajustes.Arquivos(cam, montar.modulos_existentes(raiz))
+    perguntas = _perguntas(args, ler, saida, interativo) if args.acao in (None, "edit", "set", "unset") else None
+    if args.acao is None and perguntas:
+        mudadas = []
+        try:
+            assistente.menu_config(perguntas, arqs, mudadas)
+        except (assistente.Cancelado, KeyboardInterrupt):
+            perguntas.escrever("\ncancelado; o que já foi gravado fica")
+        return _depois_de_mudar(args, raiz, perguntas, mudadas)
+    if args.acao in (None, "list"):
+        linhas = [(c.nome, *arqs.valor(c)) for c in ajustes.visiveis(arqs.cfg, arqs.bruto)]
+        if args.json:
+            print(json.dumps({nome: {"valor": v, "origem": o} for nome, v, o in linhas}, ensure_ascii=False, indent=2))
+            return 0
+        largura = max(len(nome) for nome, _, _ in linhas)
+        for nome, valor, origem in linhas:
+            print(f"{nome:<{largura}}  {ajustes.mostrar(valor) or '—':<28}  {origem or ''}".rstrip())
+        return 0
+    if args.acao == "edit":
+        if not perguntas:
+            raise cfgmod.ErroConfig("o fluxo config edit abre o editor: rode num terminal, ou use fluxo config set")
+        try:
+            gravou = assistente.editar_config(perguntas, arqs, abrir)
+        except (assistente.Cancelado, KeyboardInterrupt):
+            return _cancelado(perguntas, "nada foi gravado")
+        return _oferecer_install(args, raiz, perguntas, "config gravada.") if gravou else 0
+    if not args.chave:
+        raise cfgmod.ErroConfig(f"fluxo config {args.acao} <chave>")
+    c = ajustes.chave(args.chave)
+    if args.acao == "get":
+        valor, _ = arqs.valor(c)
+        if valor is None:  # como o git: sem valor, sai com 1 e nada no stdout
+            return 1
+        print(ajustes.mostrar(valor))
+        return 0
+    if args.acao == "set" and not args.valores:
+        raise cfgmod.ErroConfig(f"fluxo config set {c.nome} <valor>")
+    novo = ajustes.converter(c, args.valores) if args.acao == "set" else None
+    if not arqs.gravar(c, novo):
+        print(f"{c.nome}: nada mudou")
+        return 0
+    print(f"{c.nome} = {ajustes.mostrar(novo)}" if novo is not None else f"{c.nome}: volta ao padrão")
+    return _depois_de_mudar(args, raiz, perguntas, [c])
+
+
+def _depois_de_mudar(args, raiz, perguntas, mudadas):
+    if any(c.nome == "validate.dir" for c in mudadas):
+        print("aviso: o clone só troca com fluxo validate disable e fluxo validate enable")
+    if any(c.install for c in mudadas):
+        return _oferecer_install(args, raiz, perguntas, "a config mudou o que o install grava.")
+    return 0
 
 
 def cmd_task(args, raiz, ler=input, saida=None, interativo=None):
@@ -588,6 +666,14 @@ def parser():
     p.add_argument("--disable", nargs="*", metavar="MODULE")
     p.set_defaults(fn=cmd_modules)
 
+    p = sub.add_parser("config", help="mostra e muda a config (a do fluxo e duas chaves do pr-reviewer); sem ação, num "
+                       "terminal, abre o menu")
+    p.add_argument("acao", nargs="?", choices=("list", "get", "set", "unset", "edit", "path"))
+    p.add_argument("chave", nargs="?", metavar="KEY", help="ex.: task.max, models.copilot.strong, pr-reviewer.backend")
+    p.add_argument("valores", nargs="*", metavar="VALUE", help="set: o valor; a lista em vários, ou a,b")
+    p.add_argument("--json", action="store_true", help="list: em JSON, com a origem de cada valor")
+    p.set_defaults(fn=cmd_config)
+
     p = sub.add_parser("task", help="abre uma sessão numa janela do tmux (módulo task)")
     p.add_argument("id", nargs="?", help="ID da tarefa (ex.: a chave do card); sem ID é uma sessão avulsa")
     p.add_argument("-p", "--prompt", help="prompt inicial (com ID, o padrão é a skill planejar com o ID)")
@@ -652,10 +738,11 @@ def parser():
     p.add_argument("--hash", metavar="TERM", help="só imprime o hash do termo, para o tests/proibidos.sha256")
     p.set_defaults(fn=cmd_scan)
 
-    for nome in ("init", "install", "uninstall", "doctor", "modules", "task", "msg", "lock", "watch", "hook", "panel", "validate"):
+    for nome in ("init", "install", "uninstall", "doctor", "modules", "config", "task", "msg", "lock", "watch", "hook", "panel",
+                 "validate"):
         sub.choices[nome].add_argument("--home", help="usa esta pasta no lugar do HOME para config, dados e "
                                        "arquivos instalados (teste); o tmux e o ~ do code_dir continuam os reais")
-    for nome in ("modules", "task", "validate"):
+    for nome in ("modules", "config", "task", "validate"):
         sub.choices[nome].add_argument("--no-input", action="store_true",
                                        help="nunca abre o menu: o que faltar vira erro (também com CI definida, "
                                        "TERM=dumb ou num agente)")

@@ -1,4 +1,6 @@
-"""A leitura e a gravação dos JSON que o fluxo edita: a config dele e a do pr-reviewer."""
+"""A leitura e a gravação dos JSON que o fluxo edita (a config dele e a do pr-reviewer) e o `fluxo config`."""
+import contextlib
+import io
 import json
 import os
 import stat
@@ -7,7 +9,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from base import RAIZ  # noqa: F401  (põe o lib/ no sys.path)
+from base import RAIZ, escrever_config, roteiro
+from fluxo import cli, montar, validate
 from fluxo import config as cfgmod
 
 
@@ -71,6 +74,177 @@ class GravarJson(unittest.TestCase):
                 self.assertRaises(OSError):
             cfgmod.gravar_json(self.arq, {"a": 2})
         self.assertEqual((self.arq.read_text(), self.sobras()), ('{"a": 1}\n', []))
+
+
+class Config(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.home = Path(self.tmp.name).resolve()
+        self.cam = escrever_config(self.home, "copilot-claude")
+        ambiente = mock.patch.dict(os.environ)
+        ambiente.start()
+        self.addCleanup(ambiente.stop)
+        os.environ.pop("PR_REVIEWER_CONFIG_DIR", None)
+        self.pr = validate.config_pr_reviewer(self.cam, {})
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def config(self, *argv, respostas=(), interativo=False, abrir=None):
+        """(código, stdout, o que foi perguntado, o leitor)."""
+        args = cli.parser().parse_args(["config", *argv, "--home", str(self.home)])
+        ler, perguntas, out = roteiro(*respostas), io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+            code = cli.cmd_config(args, RAIZ, ler=ler, saida=perguntas, interativo=interativo,
+                                  abrir=abrir or (lambda caminho: None))
+        return code, out.getvalue(), perguntas.getvalue(), ler
+
+    def gravada(self):
+        return json.loads(self.cam.config.read_text())
+
+    def main(self, *argv):
+        err = io.StringIO()
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+            code = cli.main(["config", *argv, "--home", str(self.home)], RAIZ)
+        return code, err.getvalue()
+
+    def com_config_do_pr(self, dados=None, modo=0o664):
+        """A config do pr-reviewer como um link para o dotfiles, com outro modo: o caso desta máquina."""
+        alvo = self.home / "dotfiles" / "pr-reviewer.json"
+        alvo.parent.mkdir(exist_ok=True)
+        alvo.write_text(json.dumps(dados or {"workspaceRoot": "/x", "profile": "local"}, indent=2) + "\n")
+        os.chmod(alvo, modo)
+        self.pr.parent.mkdir(parents=True, exist_ok=True)
+        self.pr.symlink_to(alvo)
+        return alvo
+
+    def test_list_com_a_origem(self):
+        code, out, _, _ = self.config("list")
+        linhas = {l.split()[0]: l.split()[1:] for l in out.splitlines()}
+        self.assertEqual(code, 0)
+        self.assertEqual(linhas["tools"], ["copilot,claude", "config"])
+        self.assertEqual(linhas["task.max"], ["2", "padrão"])
+        self.assertEqual(linhas["models.copilot.strong"], ["—"])
+        self.assertNotIn("models.kiro.strong", linhas)  # o kiro não está em tools
+        self.assertEqual(linhas["pr-reviewer.backend"], ["—"])  # sem a config do pr-reviewer
+        _, out, _, _ = self.config("list", "--json")
+        dados = json.loads(out)
+        self.assertEqual(dados["git.base"], {"valor": "develop", "origem": "padrão"})
+        self.assertEqual(self.config()[1], self.config("list")[1])  # sem terminal, sem ação é o list
+
+    def test_get(self):
+        self.assertEqual(self.config("get", "task.max")[:2], (0, "2\n"))
+        self.assertEqual(self.config("get", "tools")[:2], (0, "copilot,claude\n"))
+        self.assertEqual(self.config("get", "models.copilot.strong")[:2], (1, ""))  # sem valor nem padrão
+        code, err = self.main("get", "task.mx")
+        self.assertEqual(code, 2)
+        self.assertIn("quis dizer task.max?", err)
+        self.assertIn("fluxo modules", self.main("get", "modules")[1])
+
+    def test_set_e_unset(self):
+        self.assertEqual(self.config("set", "task.max", "4")[:2], (0, "task.max = 4\n"))  # não pede install
+        self.assertEqual(self.gravada()["task"], {"max": 4})
+        self.assertIn("Agora: fluxo install", self.config("set", "git.base", "release")[1])
+        self.config("set", "tools", "claude", "copilot")
+        self.assertEqual(self.gravada()["tools"], ["claude", "copilot"])
+        self.config("set", "models.copilot.strong", "gpt-x")
+        self.assertEqual(self.gravada()["models"], {"copilot": {"strong": "gpt-x"}})
+        self.config("unset", "models.copilot.strong")
+        self.assertNotIn("models", self.gravada())  # sem objeto vazio para trás
+        self.config("unset", "task.max")
+        self.assertNotIn("task", self.gravada())
+        self.assertEqual(self.config("unset", "task.max")[:2], (0, "task.max: nada mudou\n"))
+        antes = self.cam.config.read_bytes()
+        for argv, erro in ((["set", "watch.interval", "30"], "no mínimo 60"),
+                           (["set", "tools", "copilot,copilot"], "sem repetir"),
+                           (["set", "forge", "bitbucket"], "não vale"),
+                           (["set", "promote.targets", "main,main"], "sem repetir"),
+                           (["set", "git.base"], "fluxo config set git.base <valor>"),
+                           (["unset", "tools"], "é obrigatória")):
+            with self.subTest(argv=argv):
+                code, err = self.main(*argv)
+                self.assertEqual(code, 2)
+                self.assertIn(erro, err)
+        code, err = self.main("set", "promote.targets", "release")  # a config inteira: os alvos sem a base
+        self.assertEqual(code, 2)
+        self.assertIn("promote.targets não pode incluir a própria git.base", err)
+        self.assertEqual(self.cam.config.read_bytes(), antes)
+
+    def test_pr_reviewer(self):
+        code, err = self.main("set", "pr-reviewer.backend", "copilot")
+        self.assertEqual(code, 2)
+        self.assertIn("fluxo validate enable", err)
+        alvo = self.com_config_do_pr()
+        self.assertEqual(self.config("get", "pr-reviewer.backend")[:2], (0, "claude\n"))  # o padrão do pr-reviewer
+        self.assertEqual(self.config("set", "pr-reviewer.backend", "copilot")[0], 0)
+        self.assertTrue(self.pr.is_symlink())
+        self.assertEqual(json.loads(alvo.read_text()), {"workspaceRoot": "/x", "profile": "local", "backend": "copilot"})
+        self.assertEqual(stat.S_IMODE(alvo.stat().st_mode), 0o664)
+        linha = next(l for l in self.config("list")[1].splitlines() if l.startswith("pr-reviewer.backend"))
+        self.assertEqual(linha.split()[1:], ["copilot", "pr-reviewer"])
+        for argv, erro in ((["set", "pr-reviewer.backend", "gpt"], "não vale"),
+                           (["set", "pr-reviewer.profile", "a b"], "um nome simples")):
+            with self.subTest(argv=argv):
+                self.assertIn(erro, self.main(*argv)[1])
+
+    def test_path(self):
+        out = self.config("path")[1]
+        self.assertIn(str(self.cam.config), out)
+        self.assertIn(str(self.pr), out)
+
+    def test_menu(self):
+        code, out, perguntas, ler = self.config(respostas=("task.max", "x", "5", "", ""), interativo=True)
+        self.assertEqual((code, ler.restantes, self.gravada()["task"]), (0, [], {"max": 5}))
+        self.assertIn("task.max: 2 → 5. Gravar?", perguntas)
+        self.assertIn("um número inteiro", perguntas)
+        self.assertNotIn("install", out)  # o task.max não muda o que o install grava
+        code, out, perguntas, ler = self.config(respostas=("tools", "claude", "", "git.base", "main", "", "git.base",
+                                                           "release", "", "", "n"), interativo=True)
+        self.assertEqual((ler.restantes, self.gravada()["tools"], self.gravada()["git"]), ([], ["claude"], {"base": "release"}))
+        self.assertIn("não pode incluir a própria git.base; nada foi gravado", perguntas)
+        self.assertEqual(perguntas.count("Rodar fluxo install agora?"), 1)  # uma oferta só, no fim
+        self.assertIn("Agora: fluxo install", out)
+
+    def test_menu_oferece_e_roda_o_install(self):
+        with mock.patch.object(cli, "cmd_install", return_value=0) as install:
+            self.config(respostas=("git.base", "release", "", "", ""), interativo=True)
+        self.assertEqual(install.call_count, 1)
+
+    def test_menu_cancelado_guarda_o_que_gravou(self):
+        code, _, perguntas, _ = self.config(respostas=("task.max", "3", "", KeyboardInterrupt), interativo=True)
+        self.assertEqual((code, self.gravada()["task"]), (0, {"max": 3}))
+        self.assertIn("cancelado; o que já foi gravado fica", perguntas)
+
+    def test_edit(self):
+        def editor(*textos):
+            fila = list(textos)
+            return lambda caminho: Path(caminho).write_text(fila.pop(0)) if fila else None
+
+        novo = json.dumps(dict(self.gravada(), task={"max": 7}))
+        code, _, perguntas, ler = self.config("edit", respostas=("editar", "n"), interativo=True,
+                                              abrir=editor('{"tools": ', novo))
+        self.assertEqual((code, ler.restantes, self.gravada()["task"]), (0, [], {"max": 7}))
+        self.assertIn("não é JSON válido", perguntas)
+        antes = self.cam.config.read_bytes()
+        code, _, perguntas, _ = self.config("edit", respostas=("descartar",), interativo=True,
+                                            abrir=editor(json.dumps(dict(self.gravada(), forge="bitbucket"))))
+        self.assertEqual((code, self.cam.config.read_bytes()), (0, antes))
+        self.assertIn("nada foi gravado", perguntas)
+        self.assertIn("nada mudou", self.config("edit", interativo=True)[2])
+        self.assertEqual([p.name for p in self.cam.config_dir.iterdir() if "editando" in p.name], [])
+        self.assertIn("rode num terminal", self.main("edit")[1])
+
+    def test_doctor_avisa_o_backend_fora_de_tools(self):
+        escrever_config(self.home, "copilot-tudo")  # só o copilot: o claude, padrão do pr-reviewer, não está aqui
+        self.com_config_do_pr({"workspaceRoot": os.path.expanduser("~/code")})
+        cfg = cfgmod.carregar(self.cam, montar.modulos_existentes(RAIZ))
+        linhas = validate.checar(cfg, self.cam, run=lambda *a, **k: None, which=lambda b: None, env={})
+        self.assertIn(("AVISO", "o pr-reviewer roda os agentes no claude, que não está em tools: "
+                                "fluxo config set pr-reviewer.backend copilot"), linhas)
+        escrever_config(self.home, "copilot-claude")
+        cfg = cfgmod.carregar(self.cam, montar.modulos_existentes(RAIZ))
+        self.assertFalse([l for l in validate.checar(cfg, self.cam, run=lambda *a, **k: None, which=lambda b: None, env={})
+                          if "roda os agentes" in l[1]])  # com o claude em tools, nada a avisar
 
 
 if __name__ == "__main__":

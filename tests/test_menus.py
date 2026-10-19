@@ -274,8 +274,11 @@ class Modules(unittest.TestCase):
         code, out, perguntas, ler, _ = self.modules("x")
         self.assertEqual((code, perguntas, ler.restantes), (0, "", ["x"]))
         self.assertIn("[x] task", out)
-        code, _, perguntas, ler, _ = self.modules("x", argv=["--enable", "lock"])
-        self.assertEqual((code, perguntas, ler.restantes, self.ligados()), (0, "", ["x"], ["task", "watch", "lock"]))
+        code, out, perguntas, ler, _ = self.modules("n", argv=["--enable", "lock"])  # sem menu; só a oferta do install
+        self.assertEqual((code, ler.restantes, self.ligados()), (0, [], ["task", "watch", "lock"]))
+        self.assertNotIn("Módulos para", perguntas)
+        self.assertIn("Rodar fluxo install agora? [S/n]", perguntas)
+        self.assertIn("Agora: fluxo install", out)
 
 
 class Validate(unittest.TestCase):

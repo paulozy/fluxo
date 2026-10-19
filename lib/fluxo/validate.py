@@ -667,6 +667,10 @@ def checar(cfg, cam, run, which, env):
                            f"({raiz}), em caminho absoluto: a validação não acharia os repos"))
     else:
         out.append((OK, f"config do pr-reviewer em {conf}"))
+    backend = dados.get("backend") or "claude"  # o padrão do pr-reviewer (src/config.ts)
+    if dados and backend not in cfg["tools"]:
+        out.append((AVISO, f"o pr-reviewer roda os agentes no {backend}, que não está em tools: "
+                           f"fluxo config set pr-reviewer.backend {cfg['tools'][0]}"))
     if estado:
-        out.append((OK, "para conferir os agentes de verdade (custa): fluxo validate exec -- doctor"))
+        out.append((OK, "para conferir os agentes de verdade (custa): fluxo validate doctor"))
     return out

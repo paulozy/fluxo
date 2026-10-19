@@ -15,7 +15,7 @@ from pathlib import Path
 
 from . import config as cfgmod
 from . import __version__
-from . import ajustes, assistente, completar, doctor, empacotar, fonte, instalar, lock, messages, montar, panel, render, task, tmux, validate, varredura, vistas, watch
+from . import ajustes, assistente, completar, demo, doctor, empacotar, fonte, instalar, lock, messages, montar, panel, render, task, tmux, validate, varredura, vistas, watch
 
 ERROS_DE_USO = (cfgmod.ErroConfig, montar.ErroMontagem, render.ErroTemplate, fonte.ErroFonte)
 
@@ -434,12 +434,18 @@ def cmd_hook(args, raiz):
 
 
 def cmd_panel(args, raiz):
-    if args.acao and (args.view or args.task or args.follow):
-        print("fluxo panel: --view, --task e --follow são da tela, e não de enable/disable", file=sys.stderr)
+    if args.acao and (args.view or args.task or args.follow or args.demo):
+        print("fluxo panel: --view, --task, --follow e --demo são da tela, e não de enable/disable", file=sys.stderr)
         return 2
     if args.task and not task.ID_RE.fullmatch(args.task):
         print(f"fluxo panel: id {args.task!r} inválido", file=sys.stderr)
         return 2
+    tela = {"aba": args.view or "list", "tarefa": args.task, "seguida": args.follow, "fixada": bool(args.follow)}
+    if args.demo:  # antes da config e da poda: o visual se confere sem instalar nada, e sem tocar o disco
+        if args.text or not sys.stdout.isatty():
+            print(panel.texto(None, demo.LIGADOS, tela, de_mentira=True))
+            return 0
+        return panel.tela(None, run=subprocess.run, ligados=demo.LIGADOS, inicial=tela, de_mentira=True)
     # o disable vale com o módulo desligado: é o que devolve o agente padrão do Kiro depois de tirá-lo
     cam, cfg = _carregar(args, raiz, None if args.acao == "disable" else "panel")
     if args.acao in ("enable", "disable"):
@@ -447,7 +453,6 @@ def cmd_panel(args, raiz):
         print(msg, file=sys.stderr if code else sys.stdout)
         return code
     panel.podar(cam.estado)  # só o panel apaga eventos velhos: o hook nunca apaga nada
-    tela = {"aba": args.view or "list", "tarefa": args.task, "seguida": args.follow, "fixada": bool(args.follow)}
     if args.text or not sys.stdout.isatty():
         print(panel.texto(cam, cfg["modules"], tela))
         return 0
@@ -930,12 +935,13 @@ def parser():
     p.set_defaults(fn=cmd_hook)
 
     p = comando("panel", "as sessões ao vivo (módulo panel); enable e disable só no Kiro V2",
-                ("fluxo panel", "fluxo panel --text", "fluxo panel --view task --task PROJ-12"))
+                ("fluxo panel", "fluxo panel --demo", "fluxo panel --text", "fluxo panel --view task --task PROJ-12"))
     p.add_argument("--text", action="store_true", help="imprime uma vez, sem a tela interativa")
     p.add_argument("--view", choices=[chave for chave, _ in vistas.ABAS],
                    help="a aba: session (a sessão seguida), task, global ou list (padrão)")
     p.add_argument("--task", help="a tarefa da aba task (padrão: a da sessão seguida, ou o plano mais novo)")
     p.add_argument("--follow", metavar="SESSION", help="o começo do id da sessão a seguir na aba session")
+    p.add_argument("--demo", action="store_true", help="dados de mentira, para conferir o visual (não lê nem grava nada)")
     p.set_defaults(fn=cmd_panel, acao=None)
     g = acoes(p)
     acao(g, "enable", "Kiro V2: o agente fluxo, com os hooks do painel, vira o padrão")

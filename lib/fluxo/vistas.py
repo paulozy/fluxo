@@ -4,7 +4,8 @@ Cada linha é uma lista de segmentos (texto, estilo). A tela traduz o estilo em 
 Nada aqui lê disco: quem lê é o `panel.Coletor`. O texto de terceiro (prompt, título de PR, linha de
 revisão, erro do watch) passa por `limpo` antes de ir para a linha, com ou sem cor.
 
-Estilos: titulo, ok, atencao, erro, fraco, sel, aba (e None, o normal).
+Estilos: titulo, ok, atencao, erro, fraco, borda, sel, aba, aba_ativa, a faixa do cabeçalho (cab, cab_forte,
+cab_fraco, cab_alerta, cab_erro) e a família do modelo (m_opus, m_sonnet, m_haiku, m_gpt); None é o normal.
 """
 import re
 import time
@@ -16,8 +17,13 @@ ABAS = (("session", "sessão"), ("task", "tarefa"), ("global", "global"), ("list
 ESTILO_DO_ESTADO = {"pergunta": "erro", "sua vez": "atencao", "trabalhando": "ok", "parada": "fraco",
                     "acabou": "fraco"}
 ESTILO_DO_VEREDITO = {"APROVÁVEL": "ok", "REPROVAR": "erro"}
-GLIFOS_UTF8 = {"cheio": "█", "vazio": "░", "ponto": "•", "seta": "→"}
-GLIFOS_ASCII = {"cheio": "#", "vazio": ".", "ponto": "*", "seta": ">"}
+# só glifos de largura 1 (East Asian Width N ou A, que é 1 nos terminais ocidentais): emoji tem largura incerta no
+# wcwidth do Mac e desalinha as bordas
+GLIFOS_UTF8 = {"cheio": "█", "vazio": "░", "ponto": "•", "seta": "→", "sel": "▸", "borda": "╭╮╰╯─│", "giro": "◐◓◑◒",
+               "estado": {"pergunta": "?", "sua vez": "●", "trabalhando": "◐", "parada": "○", "acabou": "✓"}}
+GLIFOS_ASCII = {"cheio": "#", "vazio": ".", "ponto": "*", "seta": ">", "sel": ">", "borda": "++++-|", "giro": "-\\|/",
+                "estado": {"pergunta": "?", "sua vez": "*", "trabalhando": "~", "parada": "o", "acabou": "x"}}
+MODELOS = (("opus", "m_opus"), ("sonnet", "m_sonnet"), ("haiku", "m_haiku"), ("gpt", "m_gpt"), ("codex", "m_gpt"))
 VEREDITO = re.compile(r"^\s*(?:\*\*)?Veredito:(?:\*\*)?\s*(.+?)\s*$", re.M)
 CAIXA = re.compile(r"^\s*[-*]\s+\[([ xX])\]\s+(.*\S)\s*$")
 RODADA = re.compile(r"(\d{8}-\d{4})-r(\d+)\.md$")
@@ -193,14 +199,46 @@ def _ultimo_ci(avisos):
     return ultimo
 
 
-def barra_de_abas(tela, dados):
-    linha = []
-    for n, (chave, rotulo) in enumerate(ABAS, 1):
-        linha.append((f" {n} {rotulo} ", "aba" if tela.get("aba") == chave else "fraco"))
-    esperando = sum(1 for x in dados.get("sessoes") or () if x["estado"] in ("pergunta", "sua vez"))
+def _esperando(dados):
+    return sum(1 for x in dados.get("sessoes") or () if x["estado"] in ("pergunta", "sua vez"))
+
+
+def _nos_extremos(esq, dir_, largura, estilo):
+    """`esq` encostado à esquerda e `dir_` à direita, com `estilo` no meio; sem espaço, a direita sai."""
+    usado = sum(colunas(t) for t, _ in esq)
+    resto = largura - usado - sum(colunas(t) for t, _ in dir_)
+    if resto < 1:
+        dir_, resto = [], largura - usado
+    return ajustar(esq + [(" " * max(0, resto), estilo)] + dir_, largura)
+
+
+def cabecalho(tela, dados, largura, glifos=GLIFOS_UTF8):
+    """As 2 linhas de cima de toda aba: a faixa (quantas sessões, quem espera você e a cota do mês) e as abas."""
+    n, esperando, p = len(dados.get("sessoes") or ()), _esperando(dados), glifos["ponto"]
+    esq = [(" fluxo ", "cab_forte"), (f"{p} {n} {'sessão' if n == 1 else 'sessões'} ", "cab")]
     if esperando:
-        linha.append((f"   {esperando} esperando você", "atencao"))
-    return linha
+        esq.append((f"{p} {esperando} esperando você ", "cab_alerta"))
+    faixa = _nos_extremos(esq, _cota_na_faixa(dados.get("cota"), dados["agora"], glifos), largura, "cab")
+    abas = []
+    for i, (chave, rotulo) in enumerate(ABAS, 1):
+        abas += [(f" {i} {rotulo} ", "aba_ativa" if tela.get("aba") == chave else "aba"), (" ", None)]
+    return [faixa, ajustar(abas, largura)]
+
+
+def _cota_na_faixa(cota, agora, glifos):
+    if not cota:
+        return [(time.strftime("%H:%M ", time.localtime(agora)), "cab_fraco")]
+    if cota.get("ilimitado"):
+        return [("cota ilimitada ", "cab_fraco")]
+    pct = cota["pct"]
+    estilo = "cab_erro" if pct >= 80 else "cab_alerta" if pct >= 50 else "cab"
+    cheio = max(0, min(10, round(pct / 10)))
+    return [("cota ", "cab_fraco"), (glifos["cheio"] * cheio, estilo), (glifos["vazio"] * (10 - cheio), "cab_fraco"),
+            (f" {pct:.0f}% ", estilo)] + ([(f"renova {_dia(cota['renova'])} ", "cab_fraco")] if cota.get("renova") else [])
+
+
+def _dia(ts):
+    return time.strftime("%d/%m", time.localtime(ts)) if ts else "--/--"
 
 
 def glifos_para(codificacao):
@@ -208,14 +246,20 @@ def glifos_para(codificacao):
     return GLIFOS_UTF8 if "utf" in (codificacao or "").lower().replace("-", "") else GLIFOS_ASCII
 
 
+def em_ascii(texto):
+    """Fora de UTF-8, o curses não desenha acento nem travessão: "sessões" vira "sessoes", e o que sobra fora do
+    ASCII vira "?". A largura não muda (cada letra acentuada é uma coluna)."""
+    sem = "".join(c for c in unicodedata.normalize("NFKD", texto.replace("—", "-")) if not unicodedata.combining(c))
+    return sem.encode("ascii", "replace").decode("ascii")
+
+
 def rodape(tela, glifos=GLIFOS_UTF8):
-    comum = "1-4 abas · ↑↓ escolher · Enter ir até a sessão · q sair"
-    extra = {"session": " · f seguir esta · Tab próxima · PgUp/PgDn rolar",
+    comum = "1-4 abas · ↑↓ escolher · Enter ir · q sair"
+    extra = {"session": " · f fixar · Tab próxima · PgUp/PgDn rolar",
              "task": " · ←→ outra tarefa", "list": " · f seguir · h esconder"}.get(tela.get("aba"), "")
     texto = comum + extra
     if glifos is GLIFOS_ASCII:
-        texto = texto.replace(" · ", " | ").replace("↑↓", "j/k").replace("←→", "<-/->")
-        texto = "".join(c for c in unicodedata.normalize("NFKD", texto) if not unicodedata.combining(c))
+        texto = em_ascii(texto.replace(" · ", " | ").replace("↑↓", "j/k").replace("←→", "<-/->"))
     return [(texto, "fraco")]
 
 
@@ -283,70 +327,207 @@ def _janela(linhas, altura, inicio):
     return linhas[inicio:inicio + altura]
 
 
+# ── as peças das vistas: a caixa, a barra e os números ──────────────────────
+
+def _cols(linha):
+    return sum(colunas(t) for t, _ in linha)
+
+
+def caixa(titulo, corpo, largura, glifos=GLIFOS_UTF8, direita=(), borda="borda"):
+    """O corpo numa moldura, com o título na borda de cima e `direita` (segmentos) no canto dela. Em menos de 8
+    colunas a moldura não cabe: vão o título e o corpo."""
+    if largura < 8:
+        return [ajustar(l, largura) for l in [[(limpo(titulo, 80), "titulo")]] + list(corpo)]
+    ce, cd, be, bd, h, v = glifos["borda"]
+    dentro = largura - 4
+    nome = cortar(f" {limpo(titulo, 80)} ", largura - 4)
+    canto = ajustar([(" ", None)] + list(direita) + [(" ", None)], largura - 5 - colunas(nome)) if direita else []
+    out = [[(ce + h, borda), (nome, "titulo"), (h * (largura - 4 - colunas(nome) - _cols(canto)), borda)]
+           + canto + [(h + cd, borda)]]
+    for linha in corpo:
+        linha = ajustar(linha, dentro)
+        out.append([(v + " ", borda)] + linha + [(" " * (dentro - _cols(linha)) + " " + v, borda)])
+    out.append([(be + h * (largura - 2) + bd, borda)])
+    return out
+
+
+def barra(valor, total, n, glifos=GLIFOS_UTF8, estilo="ok"):
+    """`n` colunas, cheias na proporção valor/total; qualquer valor acima de zero pinta pelo menos uma."""
+    n = max(0, n)
+    cheio = 0 if not total or not valor or valor <= 0 else max(1, min(n, round(n * valor / total)))
+    return [(glifos["cheio"] * cheio, estilo), (glifos["vazio"] * (n - cheio), "fraco")]
+
+
+def fmt_tokens(n):
+    """1234 → 1,2k; 1_200_000 → 1,2M; sem dado → —."""
+    if n is None:
+        return "—"
+    for limite, sufixo in ((1e9, "G"), (1e6, "M"), (1e3, "k")):
+        if n >= limite:
+            v = n / limite
+            return (f"{v:.1f}" if v < 9.95 else f"{v:.0f}").replace(".", ",") + sufixo
+    return str(int(n))
+
+
+def fmt_numero(v):
+    """Créditos e premium requests: 0,12 · 1,23 · 12,3 · 123."""
+    if v is None:
+        return "—"
+    casas = 2 if v < 9.995 else 1 if v < 99.95 else 0
+    return f"{v:.{casas}f}".replace(".", ",")
+
+
+def gasto(uso):
+    """O que a sessão gastou: créditos (a cobrança por token) ou premium requests (a antiga); — sem dado."""
+    uso = uso or {}
+    if uso.get("creditos") is not None and (uso["creditos"] > 0 or not uso.get("premium")):
+        return f"{fmt_numero(uso['creditos'])} cr"
+    if uso.get("premium") is not None:
+        return f"{fmt_numero(uso['premium'])} req"
+    return "—"
+
+
+def estilo_do_modelo(modelo):
+    """A cor da família do modelo, como no agent-tree: opus, sonnet, haiku e gpt."""
+    m = (modelo or "").lower()
+    return next((estilo for chave, estilo in MODELOS if chave in m), None)
+
+
+def icone(estado, glifos=GLIFOS_UTF8, agora=0):
+    """Trabalhando gira a cada segundo; os outros estados têm um glifo fixo."""
+    giro = glifos["giro"]
+    return giro[int(agora) % len(giro)] if estado == "trabalhando" else glifos["estado"].get(estado, "?")
+
+
+def _pct(v):
+    return "—" if v is None else f"{v:.0f}%"
+
+
+def _ha(segundos):
+    s = int(max(0, segundos))
+    return f"{s} s" if s < 60 else _tempo(s)
+
+
+# ── as 4 abas ───────────────────────────────────────────────────────────────
+
 def vista_sessoes(dados, tela, largura, altura, glifos=GLIFOS_UTF8):
-    """Aba 4: uma linha por sessão viva, com quem espera você em cima (a ordem do panel.ORDEM)."""
-    lista = [x for x in dados.get("sessoes") or () if x["sessao"] not in (tela.get("escondidas") or ())]
+    """Aba 4: uma linha por sessão viva, com quem espera você em cima (a ordem do panel.ORDEM). A ferramenta e o
+    pane só entram com folga: em 100 colunas, a última ação fica com o espaço."""
+    lista = visiveis(dados, tela)
     if not lista:
         return [[("nenhuma sessão com eventos hoje (os hooks estão instalados? fluxo panel enable)", "fraco")]]
-    cab = [[(f"{'sessão':<18} {'ferramenta':<10} {'estado':<11} {'há':>8}  {'pane':<5} última ação", "titulo")],
-           [("-" * min(largura, 90), "fraco")]]
-    corpo, escolhida = [], None
+    dentro, agora = max(0, largura - 4), dados["agora"]
+    largo = dentro >= 110
+    cab = ("  " + preencher("estado", 15) + preencher("sessão", 18) + (preencher("ferramenta", 9) if largo else "")
+           + preencher("modelo", 18) + f"{'ctx':>4} {'gasto':>9} {'há':>7}  " + (preencher("pane", 6) if largo else "")
+           + "última ação")
+    linhas, escolhida = [], None
     for n, x in enumerate(lista):
-        sel = x["sessao"] == tela.get("escolhida")
+        sel, uso, e = x["sessao"] == tela.get("escolhida"), x.get("uso") or {}, x["estado"]
         escolhida = n if sel else escolhida
-        acao = limpo(f"{x.get('tool', '')} {x.get('alvo', '')}", 80)
-        corpo.append([(f"{preencher(limpo(x['nome'], 40), 18)} {preencher(x.get('ferramenta') or '', 10)} ", "sel" if sel else None),
-                      (f"{x['estado']:<11}", "sel" if sel else ESTILO_DO_ESTADO[x["estado"]]),
-                      (f" {_tempo(x['ha']):>8}  {(x.get('pane') or '')[:5]:<5} {acao}", "sel" if sel else None)])
-    visiveis = max(1, altura - len(cab))
-    inicio = 0 if escolhida is None or escolhida < visiveis else escolhida - visiveis + 1
-    return [ajustar(l, largura) for l in cab + _janela(corpo, visiveis, inicio)]
+        modelo = limpo(uso.get("modelo"), 40)
+        segs = [(glifos["sel"] + " " if sel else "  ", "titulo"),
+                (f"{icone(e, glifos, agora)} {preencher(e, 13)}", ESTILO_DO_ESTADO[e]),
+                (preencher(limpo(x["nome"], 40), 17) + " ", None)]
+        if largo:
+            segs.append((preencher(x.get("ferramenta") or "", 8) + " ", "fraco"))
+        segs += [(preencher(modelo or "—", 17) + " ", estilo_do_modelo(modelo) or "fraco"),
+                 (f"{_pct(uso.get('ctx_pct')):>4} {gasto(uso):>9} {_tempo(x['ha']):>7}  ", None)]
+        if largo:
+            segs.append((preencher((x.get("pane") or "")[:5], 6), "fraco"))
+        segs.append((limpo(f"{x.get('tool', '')} {x.get('alvo', '')}", 80), None))
+        if sel:  # a linha inteira em destaque, até a borda
+            segs = [(t, "sel") for t, _ in ajustar(segs, dentro)]
+            segs.append((" " * (dentro - _cols(segs)), "sel"))
+        linhas.append(segs)
+    cabem = max(1, altura - 3)  # a borda de cima, o cabeçalho das colunas e a borda de baixo
+    inicio = 0 if escolhida is None or escolhida < cabem else escolhida - cabem + 1
+    esperando = _esperando(dados)
+    canto = [(f"{esperando} esperando você", "atencao")] if esperando else [(str(len(lista)), "fraco")]
+    return caixa("sessões", [[(cab, "fraco")]] + _janela(linhas, cabem, inicio), largura, glifos, canto,
+                 "atencao" if esperando else "borda")[:max(1, altura)]
+
+
+def _linhas_de_uso(x, glifos):
+    uso, p = x.get("uso"), glifos["ponto"]
+    if not uso:
+        dica = ("fluxo panel enable liga a statusline do Copilot" if x.get("ferramenta") == "copilot"
+                else f"o {x.get('ferramenta') or 'agente'} não manda o uso para o painel")
+        return [[("sem dado de uso: ", "fraco"), (dica, "fraco")]]
+    modelo = limpo(uso.get("modelo"), 60)
+    out = [[("modelo   ", "fraco"), (modelo or "—", estilo_do_modelo(modelo))]
+           + ([(f"  {p} effort ", "fraco"), (limpo(uso["effort"], 20), "titulo")] if uso.get("effort") else [])]
+    pct = uso.get("ctx_pct")
+    if pct is not None:
+        estilo = "erro" if pct >= 80 else "atencao" if pct >= 50 else "ok"
+        de = f" de {fmt_tokens(uso['ctx_max'])}" if uso.get("ctx_max") else ""
+        out.append([("contexto ", "fraco")] + barra(pct, 100, 20, glifos, estilo) + [(f" {pct:.0f}%{de}", None)])
+    out.append([("tokens   ", "fraco"), (f"entrada {fmt_tokens(uso.get('entrada'))}  {p}  saída {fmt_tokens(uso.get('saida'))}"
+                                         f"  {p}  cache {fmt_tokens(uso.get('cache'))}", None)])
+    partes = ([f"{fmt_numero(uso['creditos'])} créditos"] if uso.get("creditos") is not None else []) + \
+             ([f"{fmt_numero(uso['premium'])} premium requests"] if uso.get("premium") else [])
+    out.append([("gasto    ", "fraco"), (f"  {p}  ".join(partes) or "—", "titulo")])
+    return out
 
 
 def vista_sessao(dados, tela, largura, altura, glifos=GLIFOS_UTF8):
-    """Aba 1: a sessão seguida, com o prompt, as ferramentas, os subagentes e o log."""
+    """Aba 1: a sessão seguida (pasta, tarefa e prompt), o modelo e o uso, as ferramentas, os subagentes e o log.
+    Sem altura para tudo, o log cede primeiro, depois as ferramentas (até as 3 mais usadas), e por fim os subagentes."""
     x = next((s for s in dados.get("sessoes") or () if s["sessao"] == tela.get("seguida")), None)
     if x is None and tela.get("fixada") and tela.get("seguida"):
         return [[(f"a sessão fixada ({limpo(tela['seguida'], 40)}) não está entre as de hoje: Tab passa para outra", "atencao")]]
     if x is None:
         return [[("nenhuma sessão para seguir (abra uma com fluxo task, ou espere um evento)", "fraco")]]
-    out = [[("sessão ", "fraco"), (limpo(x["nome"], 30), "titulo"), (f"  {x.get('ferramenta') or ''}  ", None),
-            (x["estado"], ESTILO_DO_ESTADO[x["estado"]]), (f"  há {_tempo(x['ha'])}  pane {x.get('pane') or '-'}", "fraco")]]
+    agora, e, p = dados["agora"], x["estado"], glifos["ponto"]
     tarefa = (x.get("tarefa") or {}).get("id")
-    out.append([("pasta ", "fraco"), (limpo(x.get("cwd"), 100) or "-", None)]
-               + ([("  tarefa ", "fraco"), (limpo(tarefa, 40), "titulo")] if tarefa else []))
-    out.append([("prompt ", "fraco"), (limpo(x.get("ultimo_prompt"), 160) or "-", None)])
-    out.append([])
-    out.append([("ferramentas", "titulo")])
-    contagem = sorted((x.get("contagem") or {}).items(), key=lambda kv: (-kv[1], kv[0]))[:8]
-    maior = max((n for _, n in contagem), default=1)
-    for nome, n in contagem:
-        cheio = max(1, round(20 * n / maior))
-        out.append([(f"  {preencher(limpo(nome, 40), 18)} ", None), (glifos["cheio"] * cheio, "ok"),
-                    (glifos["vazio"] * (20 - cheio), "fraco"), (f" {n}", "fraco")])
-    if not contagem:
-        out.append([("  nenhuma ainda", "fraco")])
-    out.append([])
-    out.append([("subagentes", "titulo")])
+    topo = [[("pasta  ", "fraco"), (limpo(x.get("cwd"), 100) or "-", None)]
+            + ([("   tarefa ", "fraco"), (limpo(tarefa, 40), "titulo")] if tarefa else []),
+            [("prompt ", "fraco"), (limpo(x.get("ultimo_prompt"), 160) or "-", None)]]
+    canto = [(f"{icone(e, glifos, agora)} {e}", ESTILO_DO_ESTADO[e]),
+             (f"  {p} há {_tempo(x['ha'])}  {p} pane {x.get('pane') or '-'}", "fraco")]
+    out = caixa(f"{limpo(x['nome'], 30)} {p} {x.get('ferramenta') or ''}", topo, largura, glifos, canto)
+    uso = x.get("uso")
+    idade = [(f"{limpo(uso.get('fonte'), 20)} {p} há {_ha(agora - uso['ts'])}", "fraco")] if uso and uso.get("ts") else []
+    out += caixa("modelo e uso", _linhas_de_uso(x, glifos), largura, glifos, idade)
+
+    contagem = sorted((x.get("contagem") or {}).items(), key=lambda kv: (-kv[1], kv[0]))
     subs = sorted((x.get("subagentes") or {}).values(), key=lambda s: s["inicio"])
-    for s in subs:
-        dentro = ", ".join(f"{limpo(t, 16)} {n}" for t, n in sorted((s.get("contagem") or {}).items(), key=lambda kv: -kv[1]))
-        out.append([(f"  {glifos['ponto']} {preencher(limpo(s['rotulo'], 40), 24)} ", None),
-                    ("rodando" if s["fim"] is None else "terminou", "ok" if s["fim"] is None else "fraco"),
-                    (f"  {dentro}" if dentro else "", "fraco")])
-    if not subs:
-        out.append([("  nenhum", "fraco")])
-    out.append([])
-    out.append([("log", "titulo")])
+    resto = altura - len(out)
+    nf, ns = min(8, max(1, len(contagem))), max(1, len(subs))
+    if resto - (nf + ns + 4) < 5:  # o log não teria 3 linhas: as ferramentas cedem primeiro, até o top 3
+        nf = min(nf, 3)
+    while nf + ns + 4 > resto and nf > 1:
+        nf -= 1
+    while nf + ns + 4 > resto and ns > 1:
+        ns -= 1
+
+    maior, larg_barra = max((n for _, n in contagem), default=1), max(5, min(20, largura - 34))
+    ferr = [[(preencher(limpo(nome, 40), 18) + " ", None)] + barra(n, maior, larg_barra, glifos) + [(f" {n}", "fraco")]
+            for nome, n in contagem[:nf]] or [[("nenhuma ainda", "fraco")]]
+    canto_ferr = [(f"{sum(n for _, n in contagem)} chamadas", "fraco")] if contagem else []
+    out += caixa("ferramentas", ferr, largura, glifos, canto_ferr)
+    linhas_sub = []
+    for s in subs[-ns:]:  # cortando, ficam os mais novos
+        dentro_ = ", ".join(f"{limpo(t, 16)} {n}" for t, n in sorted((s.get("contagem") or {}).items(), key=lambda kv: -kv[1]))
+        vivo = s["fim"] is None
+        linhas_sub.append([(f"{icone('trabalhando' if vivo else 'acabou', glifos, agora)} ", "ok" if vivo else "fraco"),
+                           (preencher(limpo(s["rotulo"], 40), 24) + " ", None),
+                           ("rodando" if vivo else "terminou", "ok" if vivo else "fraco"),
+                           (f"  {dentro_}" if dentro_ else "", "fraco")])
+    rodando = sum(1 for s in subs if s["fim"] is None)
+    out += caixa("subagentes", linhas_sub or [[("nenhum", "fraco")]], largura, glifos,
+                 [(f"{rodando} rodando", "ok")] if rodando else [])
+
     log = []
-    for e in reversed(x.get("log") or ()):
-        quem = f"{limpo(e.get('agente_tipo') or e.get('agente'), 16)}: " if e.get("agente") else ""
-        texto = limpo(f"{quem}{e.get('tool') or ''} {e.get('alvo') or e.get('prompt') or ''}", 120)
-        log.append([(f"  {time.strftime('%H:%M:%S', time.localtime(e['ts']))} ", "fraco"),
-                    (f"{e.get('evento') or '':<16} ", "erro" if e.get("falhou") else "fraco"), (texto, None)])
-    espaco = max(1, altura - len(out))
-    out += _janela(log, espaco, tela.get("rolagem") or 0)
-    return [ajustar(l, largura) for l in out]
+    for ev in reversed(x.get("log") or ()):
+        quem = f"{limpo(ev.get('agente_tipo') or ev.get('agente'), 16)}: " if ev.get("agente") else ""
+        texto_ = limpo(f"{quem}{ev.get('tool') or ''} {ev.get('alvo') or ev.get('prompt') or ''}", 120)
+        log.append([(time.strftime("%H:%M:%S ", time.localtime(ev["ts"])), "fraco"),
+                    (f"{ev.get('evento') or '':<16} ", "erro" if ev.get("falhou") else "fraco"), (texto_, None)])
+    cabe_log = altura - len(out) - 2
+    if cabe_log >= 1:
+        out += caixa("log", _janela(log, cabe_log, tela.get("rolagem") or 0) or [[("vazio", "fraco")]], largura, glifos)
+    return out[:max(1, altura)]
 
 
 def vista_tarefa(dados, tela, largura, altura, glifos=GLIFOS_UTF8):
@@ -354,100 +535,111 @@ def vista_tarefa(dados, tela, largura, altura, glifos=GLIFOS_UTF8):
     id_ = tarefa_atual(dados, tela, tela.get("seguida"))
     if not id_:
         return [[("nenhuma tarefa com plano ainda (o planejar grava em planos/<id>.md)", "fraco")]]
-    ordem = ordem_das_tarefas(dados)
-    posicao = f"  ({ordem.index(id_) + 1}/{len(ordem)})" if id_ in ordem else ""
-    out = [[("tarefa ", "fraco"), (limpo(id_, 40), "titulo"), (posicao, "fraco")]]
+    ordem, agora = ordem_das_tarefas(dados), dados["agora"]
+    posicao = [(f"{ordem.index(id_) + 1}/{len(ordem)}", "fraco")] if id_ in ordem else []
     plano = (dados.get("planos") or {}).get(id_)
     if not plano:
-        out.append([(f"  sem plano em planos/{limpo(id_, 40)}.md", "fraco")])
+        corpo = [[(f"sem plano em planos/{limpo(id_, 40)}.md", "fraco")]]
     else:
         status = plano["status"]
-        out.append([("status ", "fraco"), (status, "ok" if status in ("aprovado", "concluido") else "atencao"),
-                    ("  repos ", "fraco"), (plano["repos"] or "-", None), ("  base ", "fraco"), (plano["base"] or "-", None),
-                    ("  criado ", "fraco"), (plano["criado"] or "-", None)])
-        out.append([])
+        corpo = [[("status ", "fraco"), (status, "ok" if status in ("aprovado", "concluido") else "atencao"),
+                  ("   base ", "fraco"), (plano["base"] or "-", None), ("   criado ", "fraco"), (plano["criado"] or "-", None)],
+                 [("repos  ", "fraco"), (plano["repos"] or "-", None)]]
+    out = caixa(f"tarefa {limpo(id_, 40)}", corpo, largura, glifos, posicao)
+    if plano and plano["checklist"] is None:
+        out += caixa("checklist", [[("sem checklist no plano", "fraco")]], largura, glifos)
+    elif plano:
         checklist = plano["checklist"]
-        if checklist is None:
-            out.append([("sem checklist no plano", "fraco")])
-        else:
-            feitos, total = sum(1 for f, _ in checklist if f), len(checklist)
-            cheio = round(20 * feitos / total) if total else 0
-            out.append([("checklist ", "titulo"), (glifos["cheio"] * cheio, "ok"), (glifos["vazio"] * (20 - cheio), "fraco"),
-                        (f" {feitos}/{total}", "fraco")])
-            for feito, texto in checklist:
-                out.append([(f"  [{'x' if feito else ' '}] ", "ok" if feito else "fraco"), (texto, None if feito else "fraco")])
-    out.append([])
-    out.append([("sessões", "titulo")])
+        feitos, total = sum(1 for f, _ in checklist if f), len(checklist)
+        itens = [[(f"{glifos['estado']['acabou' if feito else 'parada']} ", "ok" if feito else "fraco"),
+                  (texto_, None if feito else "fraco")] for feito, texto_ in checklist]
+        out += caixa("checklist", itens or [[("vazio", "fraco")]], largura, glifos,
+                     barra(feitos, total, 10, glifos) + [(f" {feitos}/{total}", "fraco")])
     vivas = [x for x in dados.get("sessoes") or () if (x.get("tarefa") or {}).get("id") == id_]
-    for x in vivas:
-        out.append([(f"  {preencher(limpo(x['nome'], 40), 18)} {preencher(x.get('ferramenta') or '', 8)} ", None),
-                    (x["estado"], ESTILO_DO_ESTADO[x["estado"]])])
-    if not vivas:
-        out.append([("  nenhuma viva", "fraco")])
+    out += caixa("sessões", [[(f"{icone(x['estado'], glifos, agora)} {preencher(x['estado'], 12)}", ESTILO_DO_ESTADO[x["estado"]]),
+                              (preencher(limpo(x["nome"], 40), 18) + " ", None), (gasto(x.get("uso")), "fraco")]
+                             for x in vivas] or [[("nenhuma viva", "fraco")]], largura, glifos)
     ligados = dados.get("ligados") or set()
     if "reviewer" in ligados:
-        out.append([])
-        out.append([("revisões", "titulo")])
         revs = sorted((dados.get("revisoes") or {}).get(id_, ()), key=lambda r: r["rodada"])
-        for r in revs:
-            out.append([(f"  r{r['rodada']} {r['quando']}  ", "fraco"), (r["veredito"], ESTILO_DO_VEREDITO.get(r["veredito"], "atencao"))])
-        if not revs:
-            out.append([("  nenhuma rodada", "fraco")])
+        out += caixa("revisões", [[(f"r{r['rodada']}  {r['quando']}  ", "fraco"),
+                                   (r["veredito"], ESTILO_DO_VEREDITO.get(r["veredito"], "atencao"))]
+                                  for r in revs] or [[("nenhuma rodada", "fraco")]], largura, glifos)
     if "watch" in ligados:
-        out.append([])
-        out.append([("PRs/MRs", "titulo")])
-        da_tarefa = [a for a in dados.get("avisos") or () if cita(id_, a.get("titulo"))]
         por_ref = {}
-        for a in da_tarefa:  # o último aviso de cada PR/MR, e o último de CI
-            por_ref.setdefault(a.get("ref"), {})["ci" if a.get("tipo") == "ci" else "outro"] = a
+        for a in dados.get("avisos") or ():  # o último aviso de cada PR/MR, e o último de CI
+            if cita(id_, a.get("titulo")):
+                por_ref.setdefault(a.get("ref"), {})["ci" if a.get("tipo") == "ci" else "outro"] = a
+        prs = []
         for ref, avisos in sorted(por_ref.items(), key=lambda kv: str(kv[0])):
-            linha = [(f"  {limpo(ref, 40)}  ", None)]
+            linha = [(preencher(limpo(ref, 40), 22) + " ", None)]
             if "outro" in avisos:
-                linha.append((limpo(avisos["outro"].get("texto"), 50), None))
+                linha.append((limpo(avisos["outro"].get("texto"), 50) + "  ", "fraco"))
             if "ci" in avisos:
-                linha.append((f"  {limpo(avisos['ci'].get('texto'), 20)}", "erro" if avisos["ci"].get("ci") == "FAILURE" else "ok"))
-            out.append(linha)
-        if not por_ref:
-            out.append([("  nenhum aviso que cite a tarefa no título", "fraco")])
-    return [ajustar(l, largura) for l in _janela(out, max(1, altura), tela.get("rolagem") or 0)]
+                linha.append((limpo(avisos["ci"].get("texto"), 20), "erro" if avisos["ci"].get("ci") == "FAILURE" else "ok"))
+            prs.append(linha)
+        out += caixa("PRs/MRs", prs or [[("nenhum aviso que cite a tarefa no título", "fraco")]], largura, glifos)
+    return _janela(out, max(1, altura), tela.get("rolagem") or 0)
+
+
+def _caixa_da_cota(dados, largura, glifos):
+    """A cota do mês (o cache do Copilot) e o que as sessões do painel gastaram."""
+    cota, agora, p = dados.get("cota"), dados["agora"], glifos["ponto"]
+    if not cota:
+        corpo = [[("sem dado: o cache do Copilot (copilot-user-cache.json) não foi achado", "fraco")]]
+    elif cota.get("ilimitado"):
+        corpo = [[("ilimitada", "ok"), (f"  {p} plano {limpo(cota.get('plano'), 20) or '?'}", "fraco")]]
+    else:
+        pct = cota["pct"]
+        estilo = "erro" if pct >= 80 else "atencao" if pct >= 50 else "ok"
+        corpo = [barra(pct, 100, 30, glifos, estilo) + [(f" {pct:.0f}% usado", estilo)],
+                 [(f"{fmt_numero(cota['usado'])} de {fmt_numero(cota['total'])} {cota['unidade']}", None)]
+                 + ([(f"  {p} excedente {fmt_numero(cota['excedente'])}", "erro")] if cota.get("excedente") else []),
+                 [(f"plano {limpo(cota.get('plano'), 20) or '?'}  {p} renova {_dia(cota.get('renova'))}", "fraco")]
+                 + ([(f"  {p} dado de {_ha(agora - cota['ts'])} atrás", "fraco")] if cota.get("ts") else [])]
+    com_uso = [x["uso"] for x in dados.get("sessoes") or () if x.get("uso")]
+    if com_uso:
+        creditos = sum(u.get("creditos") or 0 for u in com_uso)
+        tokens = sum((u.get("entrada") or 0) + (u.get("saida") or 0) for u in com_uso)
+        corpo.append([("nas sessões do painel: ", "fraco"), (f"{fmt_numero(creditos)} créditos  {p}  {fmt_tokens(tokens)} tokens", "titulo"),
+                      (f"  ({len(com_uso)} {'sessão' if len(com_uso) == 1 else 'sessões'})", "fraco")])
+    return caixa("cota do mês", corpo, largura, glifos)
 
 
 def vista_global(dados, tela, largura, altura, glifos=GLIFOS_UTF8):
-    """Aba 3: as sessões por estado, a trava, o watch, as revisões e os alertas."""
+    """Aba 3: as sessões por estado, a cota do mês, os alertas, a trava, o watch e as revisões."""
     agora, ligados = dados["agora"], dados.get("ligados") or set()
     contagem = {}
     for x in dados.get("sessoes") or ():
         contagem[x["estado"]] = contagem.get(x["estado"], 0) + 1
-    out = [[("sessões ", "titulo")] + ([(f" {estado} {contagem[estado]} ", ESTILO_DO_ESTADO[estado])
-                                         for estado in ESTILO_DO_ESTADO if estado in contagem] or [(" nenhuma", "fraco")])]
-    out.append([])
-    out.append([("alertas", "titulo")])
-    out += [[(f"  {glifos['ponto']} {texto}", estilo)] for texto, estilo in alertas(dados)] or [[("  nenhum", "fraco")]]
+    por_estado = [(f"{icone(e, glifos, agora)} {e} {contagem[e]}    ", ESTILO_DO_ESTADO[e]) for e in ESTILO_DO_ESTADO if e in contagem]
+    out = caixa("sessões", [por_estado or [("nenhuma", "fraco")]], largura, glifos)
+    if "cota" in dados:  # só com o Copilot: o Coletor só põe a chave quando ele está em tools
+        out += _caixa_da_cota(dados, largura, glifos)
+    lista = alertas(dados)
+    out += caixa("alertas", [[(f"{glifos['ponto']} {texto_}", estilo)] for texto_, estilo in lista] or [[("nenhum", "fraco")]],
+                 largura, glifos, [(str(len(lista)), "erro")] if lista else [],
+                 "erro" if any(estilo == "erro" for _, estilo in lista) else "borda")
     if "lock" in ligados:
         trava = dados.get("trava") or {}
-        dono = trava.get("dono")
-        out.append([])
-        out.append([("trava ", "titulo"), (limpo(trava.get("texto") or "livre", 120),
-                                            "atencao" if dono and trava.get("vivo") is False else None)])
+        out += caixa("trava", [[(limpo(trava.get("texto") or "livre", 120),
+                                 "atencao" if trava.get("dono") and trava.get("vivo") is False else None)]], largura, glifos)
     if "watch" in ligados:
-        vigia = dados.get("vigia") or {}
-        ultimo = vigia.get("ultimo_tick")
-        out.append([])
-        out.append([("watch ", "titulo"), (f"último tick há {_tempo(agora - ultimo)}" if ultimo else "nenhum tick ainda", "fraco")])
+        ultimo = (dados.get("vigia") or {}).get("ultimo_tick")
+        feed = []
         for a in sorted(dados.get("avisos") or (), key=lambda a: a.get("ts", 0), reverse=True)[:10]:
             estilo = ("erro" if a.get("ci") == "FAILURE" else "ok" if a.get("ci") == "SUCCESS" else None) if a.get("tipo") == "ci" else None
-            out.append([(f"  {_hora(a.get('ts'))} ", "fraco"), (f"{limpo(a.get('ref'), 30)} ", None),
-                        (limpo(a.get("texto"), 60), estilo)])
+            feed.append([(f"{_hora(a.get('ts'))} ", "fraco"), (preencher(limpo(a.get("ref"), 30), 22) + " ", None),
+                         (limpo(a.get("texto"), 60), estilo)])
+        out += caixa("watch", feed or [[("nenhum aviso nas últimas 24 h", "fraco")]], largura, glifos,
+                     [(f"último tick há {_tempo(agora - ultimo)}" if ultimo else "nenhum tick ainda", "fraco")])
     if "reviewer" in ligados:
-        out.append([])
-        out.append([("revisões das últimas 24 h", "titulo")])
         recentes = sorted(((id_, r) for id_, revs in (dados.get("revisoes") or {}).items() for r in revs
                            if agora - r.get("mtime", 0) < DIA), key=lambda ir: ir[1].get("mtime", 0), reverse=True)
-        for id_, r in recentes[:10]:
-            out.append([(f"  {limpo(id_, 30)} r{r['rodada']}  ", None), (r["veredito"], ESTILO_DO_VEREDITO.get(r["veredito"], "atencao"))])
-        if not recentes:
-            out.append([("  nenhuma", "fraco")])
-    return [ajustar(l, largura) for l in _janela(out, max(1, altura), tela.get("rolagem") or 0)]
+        out += caixa("revisões das últimas 24 h", [[(preencher(limpo(id_, 30), 18) + f" r{r['rodada']}  ", None),
+                                                    (r["veredito"], ESTILO_DO_VEREDITO.get(r["veredito"], "atencao"))]
+                                                   for id_, r in recentes[:10]] or [[("nenhuma", "fraco")]], largura, glifos)
+    return _janela(out, max(1, altura), tela.get("rolagem") or 0)
 
 
 VISTAS = {"session": vista_sessao, "task": vista_tarefa, "global": vista_global, "list": vista_sessoes}

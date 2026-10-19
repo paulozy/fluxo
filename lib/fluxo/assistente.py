@@ -303,6 +303,7 @@ def menu_config(p, arqs, mudadas):
                 p.escrever(f"  {c.nome} gravada")
         except cfgmod.ErroConfig as exc:  # a config inteira não fecha (ex.: o promote.targets com a git.base)
             p.escrever(f"  {exc}; nada foi gravado")
+            arqs.recarregar()  # se foi "mudou no meio", os bytes velhos recusariam as próximas
 
 
 def _pedir_valor(p, c, atual):

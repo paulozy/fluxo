@@ -223,7 +223,8 @@ def ler_json(caminho):
 def gravar_json(caminho, dados, antes=None, modo=0o600):
     """Grava sem deixar o arquivo pela metade. Segue o link (a config pode ser um link do dotfiles, e o os.replace
     trocaria o link por um arquivo comum), mantém o modo do original (`modo` só vale para um arquivo novo) e, com
-    `antes` (os bytes do ler_json), recusa se o arquivo mudou no meio."""
+    `antes` (os bytes do ler_json), recusa se o arquivo mudou desde a leitura. É uma conferência, não uma trava: uma
+    gravação de outro processo entre ela e o rename ainda se perde."""
     alvo = Path(os.path.realpath(caminho))
     try:
         modo = stat.S_IMODE(alvo.stat().st_mode)

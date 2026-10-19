@@ -234,6 +234,8 @@ fluxo config path
   2 e sugere a mais parecida.
 - **O `edit`** abre uma cópia e só grava o que passa na validação. Se não passar, pergunta se edita de novo ou
   descarta, como o visudo.
+- **Uma config que não fecha não trava o `fluxo config`,** que é quem a conserta. O `list` avisa e mostra o que dá,
+  o `set` e o `unset` validam só o resultado, e um JSON inválido se conserta pelo `edit`.
 - **As chaves `pr-reviewer.backend` e `pr-reviewer.profile`** gravam na config do pr-reviewer. Ela tem de existir
   antes (`fluxo validate enable`). Se ela for um link, como no dotfiles, o link fica e o alvo é que muda, com o
   mesmo modo.

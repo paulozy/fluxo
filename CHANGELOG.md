@@ -33,6 +33,9 @@
   - os erros de uso mais comuns saem em português.
 - **Uma flag que não é da ação agora é erro de uso** (`fluxo validate status --fix`, `fluxo panel enable --view`),
   ainda com saída 2.
+- **As flags de uma ação vêm depois dela:** `fluxo lock acquire --id X`, e não `fluxo lock --id X acquire`. Só o
+  `--home` e o `--no-input` valem dos dois lados. Nenhum comando gerado pelo fluxo, nenhuma skill e nenhum doc usava a
+  outra ordem.
 - **As configs são gravadas de forma segura:** o arquivo nunca fica pela metade, o link e o modo são mantidos, e
   nada é gravado se o arquivo mudou no meio. JSON com chave repetida é recusado.
 - **No Ctrl-C, o `lock run` espera o comando terminar** antes de soltar a trava.

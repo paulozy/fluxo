@@ -70,33 +70,56 @@ def visiveis(cfg, bruto):
 
 
 class Arquivos:
-    """As duas configs, lidas uma vez: o bruto (o que está no arquivo), os bytes lidos (para o gravar_json recusar
-    o que mudou no meio) e a config do fluxo com os padrões."""
+    """As duas configs: o bruto (o que está no arquivo), os bytes lidos (para o gravar_json recusar o que mudou no
+    meio) e a config do fluxo com os padrões.
+
+    Uma config que não fecha não impede o `fluxo config`, que é quem a conserta: o erro fica em `erro`, o list e o
+    get mostram o que dá, e o set, o unset e o edit validam só o resultado. A do pr-reviewer só é lida quando a chave
+    é dela: um JSON dela estragado não trava as chaves do fluxo."""
 
     def __init__(self, cam, existentes, env=None):
         self.cam, self.existentes = cam, existentes
         self.caminho_pr = validate.config_pr_reviewer(cam, os.environ if env is None else env)
-        try:
-            self.bruto, self.lido = cfgmod.ler_json(cam.config)
-        except FileNotFoundError:
-            raise cfgmod.ErroConfig(f"sem config em {cam.config}: rode `fluxo init`") from None
-        self.cfg = cfgmod.validar(self.bruto, existentes)
-        try:
-            self.pr, self.lido_pr = cfgmod.ler_json(self.caminho_pr)
-        except FileNotFoundError:
-            self.pr, self.lido_pr = None, None
+        self.recarregar()
 
-    def _de(self, c):
-        return self.bruto if c.onde == FLUXO else self.pr
+    def recarregar(self):
+        """Lê de novo as duas: depois de uma recusa por "mudou no meio", os bytes velhos recusariam tudo."""
+        self.erro, self._pr = None, None
+        try:
+            self.bruto, self.lido = cfgmod.ler_json(self.cam.config)
+        except FileNotFoundError:
+            raise cfgmod.ErroConfig(f"sem config em {self.cam.config}: rode `fluxo init`") from None
+        except cfgmod.ErroConfig as exc:  # JSON inválido: só o edit conserta, a partir dos bytes
+            self.bruto, self.lido, self.erro = {}, self.cam.config.read_bytes(), exc
+        try:
+            self.cfg = cfgmod.validar(self.bruto, self.existentes)
+        except cfgmod.ErroConfig as exc:
+            self.erro = self.erro or exc
+            self.cfg = dict(_copia(cfgmod.PADRAO), **self.bruto)  # o que der, para mostrar
+            if not isinstance(self.cfg.get("tools"), list):
+                self.cfg["tools"] = []
+
+    def pr(self):
+        """(dados, bytes lidos) da config do pr-reviewer, ou (None, None) se ela não existe. Lida uma vez."""
+        if self._pr is None:
+            try:
+                self._pr = cfgmod.ler_json(self.caminho_pr)
+            except FileNotFoundError:
+                self._pr = (None, None)
+        return self._pr
 
     def valor(self, c):
         """(valor efetivo, origem): "config" ou "pr-reviewer" quando está no arquivo, "padrão" quando vem do
-        padrão, e (None, None) quando não tem nenhum."""
+        padrão, e (None, None) quando não tem nenhum. A config do pr-reviewer ilegível vira (None, "ilegível")."""
         if c.onde == PR_REVIEWER:
-            v = _pegar(self.pr or {}, c.caminho)
+            try:
+                dados, _ = self.pr()
+            except cfgmod.ErroConfig:
+                return None, "ilegível"
+            v = _pegar(dados or {}, c.caminho)
             if v is not None:
                 return v, PR_REVIEWER
-            return ("claude", "padrão") if c.nome == "pr-reviewer.backend" and self.pr is not None else (None, None)
+            return ("claude", "padrão") if c.nome == "pr-reviewer.backend" and dados is not None else (None, None)
         v = _pegar(self.bruto, c.caminho)
         if v is not None:
             return v, "config"
@@ -104,25 +127,30 @@ class Arquivos:
         return (padrao, "padrão") if padrao is not None else (None, None)
 
     def gravar(self, c, valor):
-        """Muda (ou, com None, tira) a chave e grava, validando antes. Devolve True se mudou algo."""
-        if c.onde == PR_REVIEWER and self.pr is None:
-            raise cfgmod.ErroConfig(f"sem a config do pr-reviewer em {self.caminho_pr}: rode `fluxo validate enable`")
+        """Muda (ou, com None, tira) a chave e grava, validando antes o resultado. Devolve True se mudou algo."""
         if valor is None and c.obrigatoria:
             raise cfgmod.ErroConfig(f"{c.nome} é obrigatória: troque com fluxo config set {c.nome} …")
-        dados = _copia(self._de(c))
+        if c.onde == PR_REVIEWER:
+            atual, lido = self.pr()  # ilegível: levanta, e nada é gravado por cima do que não se leu
+            if atual is None:
+                raise cfgmod.ErroConfig(f"sem a config do pr-reviewer em {self.caminho_pr}: rode `fluxo validate enable`")
+        else:
+            if isinstance(self.erro, cfgmod.ErroConfig) and not self.bruto:
+                raise cfgmod.ErroConfig(f"{self.erro}: conserte com fluxo config edit")
+            atual, lido = self.bruto, self.lido
+        dados = _copia(atual)
         if valor is None:
             _tirar(dados, c.caminho)
         else:
             _por(dados, c.caminho, valor)
-        if dados == self._de(c):
+        if dados == atual:
             return False
         if c.onde == FLUXO:
-            self.cfg = cfgmod.validar(dados, self.existentes)  # a config inteira: o promote.targets não pode ter a base
-            cfgmod.gravar_json(self.cam.config, dados, antes=self.lido)
-            self.bruto, self.lido = cfgmod.ler_json(self.cam.config)
+            cfgmod.validar(dados, self.existentes)  # a config inteira: o promote.targets não pode ter a base
+            cfgmod.gravar_json(self.cam.config, dados, antes=lido)
         else:
-            cfgmod.gravar_json(self.caminho_pr, dados, antes=self.lido_pr)
-            self.pr, self.lido_pr = cfgmod.ler_json(self.caminho_pr)
+            cfgmod.gravar_json(self.caminho_pr, dados, antes=lido)
+        self.recarregar()
         return True
 
 

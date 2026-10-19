@@ -457,18 +457,15 @@ def preparar_receita(cfg, cam, repo, modo, backend, json_=True):
 
 def em_primeiro_plano(cam, argv, ch=None, trava=False, esperar=0, popen=subprocess.Popen):
     """O pr-review neste terminal, para o `fluxo validate recipe` e o `doctor`. Com `trava`, segura a do stack
-    enquanto ele roda, como o processo de fundo do start. O Ctrl-C do terminal chega ao pr-review, que é do mesmo
-    grupo e derruba o que subiu: aqui só se espera ele terminar."""
-    if trava:
-        return lock.rodar(lock.Trava(cam.estado), argv, esperar, popen=popen,
-                          sessao=f"validar-{ch.replace('/', '-')}", pid=os.getpid(), id_=ch)
-    recebido = []
-    antigo = signal.signal(signal.SIGINT, lambda sinal, _frame: recebido.append(sinal))
-    try:
-        codigo = popen(argv).wait()
-    finally:
-        signal.signal(signal.SIGINT, antigo)
-    return 128 + recebido[0] if recebido else codigo
+    enquanto ele roda, como o processo de fundo do start. Os sinais vão como no `lock run`: o Ctrl-C do terminal já
+    chega ao pr-review, que derruba o que subiu, e aqui só se espera ele terminar."""
+    if ch and _rodando(_pasta_execucao(cam, ch)):  # o mesmo repo em segundo plano: os dois stacks subiriam juntos
+        raise cfgmod.ErroConfig(f"já há uma execução de {ch} rodando em segundo plano: fluxo validate status "
+                                f"--recipe {ch.partition('/')[2]}, ou fluxo validate stop")
+    # uma sessão só desta chamada: com o nome da de fundo, o Trava.pegar a aceitaria de novo como dona
+    sessao = f"validar-aqui-{(ch or 'pr-review').replace('/', '-')}-{os.getpid()}"
+    return lock.rodar(lock.Trava(cam.estado) if trava else None, argv, esperar, popen=popen,
+                      sessao=sessao, pid=os.getpid(), id_=ch)
 
 
 def start(cfg, cam, raiz, ch, argv, trava, id_=None, popen=subprocess.Popen, espera=ESPERA):

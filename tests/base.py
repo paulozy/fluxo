@@ -24,6 +24,8 @@ atexit.register(shutil.rmtree, os.environ["TMUX_TMPDIR"], True)
 os.environ["CI"] = "1"
 # a ajuda do argparse quebra as linhas pela largura do terminal, e a 3.14 põe cor: fixos, para o teste não depender
 os.environ["COLUMNS"], os.environ["NO_COLOR"] = "100", "1"
+# a config do pr-reviewer de verdade nunca: sem a variável, ela fica dentro do --home de cada teste
+os.environ.pop("PR_REVIEWER_CONFIG_DIR", None)
 
 from fluxo import assistente  # noqa: E402
 from fluxo import config as cfgmod  # noqa: E402

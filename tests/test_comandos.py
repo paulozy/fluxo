@@ -272,6 +272,19 @@ class Status(unittest.TestCase):
             cli.main(["install", "--home", str(self.home)], RAIZ)
         self.assertIn("install      em dia", self.status()[1])
 
+    def test_so_os_modulos_ligados(self):
+        escrever_config(self.home, "claude")  # sem módulo nenhum
+        linhas = {l.split()[0] for l in self.status()[1].splitlines()[1:] if l.startswith("  ")}
+        self.assertEqual(linhas, {"config", "ferramentas", "módulos", "install"})
+
+    def test_ctrl_c_fora_de_uma_pergunta(self):
+        escrever_config(self.home, "claude")
+        err = io.StringIO()
+        with mock.patch.object(cli, "cmd_status", side_effect=KeyboardInterrupt), contextlib.redirect_stderr(err):
+            self.assertEqual(cli.main(["status", "--home", str(self.home)], RAIZ), 130)
+        self.assertIn("interrompido", err.getvalue())
+        self.assertNotIn("Traceback", err.getvalue())
+
     def test_config_que_nao_fecha(self):
         escrever_config(self.home, "claude", forge="bitbucket")
         code, out = self.status()

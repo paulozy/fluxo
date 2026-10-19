@@ -155,6 +155,8 @@ def cmd_config(args, raiz, ler=input, saida=None, interativo=None, abrir=_abrir_
             perguntas.escrever("\ncancelado; o que já foi gravado fica")
         return _depois_de_mudar(args, raiz, perguntas, mudadas)
     if args.acao in (None, "list"):
+        if arqs.erro:
+            print(f"fluxo config: a config não fecha ({arqs.erro}); fluxo config edit conserta", file=sys.stderr)
         linhas = [(c.nome, *arqs.valor(c)) for c in ajustes.visiveis(arqs.cfg, arqs.bruto)]
         if args.json:
             print(json.dumps({nome: {"valor": v, "origem": o} for nome, v, o in linhas}, ensure_ascii=False, indent=2))
@@ -993,3 +995,6 @@ def main(argv, raiz):
     except (RuntimeError, OSError) as exc:  # manifesto ilegível, arquivo que sumiu no meio, permissão
         print(f"fluxo: {exc}", file=sys.stderr)
         return 1
+    except KeyboardInterrupt:  # o Ctrl-C esperando a trava, ou fora de uma pergunta: sem traceback
+        print("\nfluxo: interrompido", file=sys.stderr)
+        return 130

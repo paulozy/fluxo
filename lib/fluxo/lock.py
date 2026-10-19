@@ -240,15 +240,27 @@ def pegar_esperando(trava, esperar, dormir=time.sleep, relogio=time.monotonic, *
         dormir(min(5, max(0.5, fim - relogio())))
 
 
+def _ctrl_c_do_terminal():
+    """O SIGINT veio do Ctrl-C de um terminal em que este processo está na frente? Aí ele também chegou ao comando,
+    que é do mesmo grupo. Sem terminal (um `kill -INT`, um agente), não chegou."""
+    try:
+        return os.tcgetpgrp(sys.stdin.fileno()) == os.getpgrp()
+    except (OSError, ValueError, AttributeError):
+        return False
+
+
 def rodar(trava, comando, esperar, popen=subprocess.Popen, erro=None, **kw):
     """Pega, roda e solta. Um SIGTERM/SIGHUP (o timeout da ferramenta) é repassado ao comando, e a trava
     só é solta depois que ele termina, também no Ctrl-C: o `docker compose` precisa de tempo para derrubar o stack, e
-    soltar antes deixaria a próxima sessão subir com as portas ainda ocupadas."""
+    soltar antes deixaria a próxima sessão subir com as portas ainda ocupadas. Sem `trava` (None), só roda, com o
+    mesmo cuidado com os sinais."""
     erro = erro or sys.stderr
-    ok, dono, nova = pegar_esperando(trava, esperar, **kw)
-    if not ok:
-        print(f"fluxo lock: {descrever(dono, True)}", file=erro)
-        return OCUPADA
+    nova = False
+    if trava is not None:
+        ok, dono, nova = pegar_esperando(trava, esperar, **kw)
+        if not ok:
+            print(f"fluxo lock: {descrever(dono, True)}", file=erro)
+            return OCUPADA
     recebido, proc = [], None
 
     def repassar(sinal, _frame):
@@ -256,11 +268,14 @@ def rodar(trava, comando, esperar, popen=subprocess.Popen, erro=None, **kw):
         if proc is not None and proc.poll() is None:
             proc.send_signal(sinal)
 
-    def anotar(sinal, _frame):  # o Ctrl-C do terminal já chega ao comando, que é do mesmo grupo: só espera
-        recebido.append(sinal)
+    def ctrl_c(sinal, frame):  # do terminal, já chegou ao comando: repassar mandaria dois
+        if _ctrl_c_do_terminal():
+            recebido.append(sinal)
+        else:
+            repassar(sinal, frame)
 
     antigos = {s: signal.signal(s, repassar) for s in (signal.SIGTERM, signal.SIGHUP)}
-    antigos[signal.SIGINT] = signal.signal(signal.SIGINT, anotar)
+    antigos[signal.SIGINT] = signal.signal(signal.SIGINT, ctrl_c)
     try:
         proc = popen(comando)
         codigo = proc.wait()  # o wait é retomado depois do handler

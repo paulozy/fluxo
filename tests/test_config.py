@@ -237,6 +237,59 @@ class Config(unittest.TestCase):
         self.assertEqual([p.name for p in self.cam.config_dir.iterdir() if "editando" in p.name], [])
         self.assertIn("rode num terminal", self.main("edit")[1])
 
+    def test_config_que_nao_fecha_se_conserta_pelo_config(self):
+        """O status manda usar o fluxo config para consertar: ele não pode recusar a config que vai consertar."""
+        bruto = self.gravada()
+        self.cam.config.write_text(json.dumps(dict(bruto, task={"max": 0})))
+        code, err = self.main("list")
+        self.assertEqual(code, 0)
+        self.assertIn("a config não fecha", err)
+        self.assertEqual(self.config("set", "task.max", "3")[0], 0)
+        self.assertEqual(self.gravada()["task"], {"max": 3})
+        self.cam.config.write_text("{ estragada")  # JSON inválido: o set recusa, o edit conserta
+        self.assertIn("conserte com fluxo config edit", self.main("set", "task.max", "4")[1])
+        code, _, _, _ = self.config("edit", respostas=("n",), interativo=True,
+                                    abrir=lambda caminho: Path(caminho).write_text(json.dumps(bruto)))
+        self.assertEqual((code, self.gravada()), (0, bruto))
+
+    def test_config_do_pr_reviewer_ilegivel_nao_trava_as_do_fluxo(self):
+        self.pr.parent.mkdir(parents=True)
+        self.pr.write_text('{"backend": "kiro", "backend": "copilot"}')  # o JSON.parse dele aceita; o fluxo não grava
+        self.assertEqual(self.config("set", "task.max", "3")[0], 0)
+        linha = next(l for l in self.config("list")[1].splitlines() if l.startswith("pr-reviewer.backend"))
+        self.assertEqual(linha.split()[1:], ["—", "ilegível"])
+        code, err = self.main("set", "pr-reviewer.backend", "copilot")
+        self.assertEqual(code, 2)
+        self.assertIn("aparece duas vezes", err)
+
+    def test_arquivo_mudado_durante_o_edit_nao_e_sobrescrito(self):
+        def abrir(caminho):
+            Path(caminho).write_text(json.dumps(dict(self.gravada(), task={"max": 9})))
+            self.cam.config.write_text(json.dumps(dict(self.gravada(), forge="gitlab", gitlab={"host": "g.x"})))
+        with self.assertRaisesRegex(cfgmod.ErroConfig, "mudou enquanto era editado"):
+            self.config("edit", interativo=True, abrir=abrir)
+        self.assertEqual(self.gravada()["forge"], "gitlab")
+
+    def test_modules_nao_sobrescreve_o_que_mudou_no_meio(self):
+        real = cfgmod.validar
+
+        def validar_e_alguem_grava(bruto, existentes):  # outra gravação entre a leitura e a escrita
+            self.cam.config.write_text(json.dumps(dict(self.gravada(), forge="gitlab", gitlab={"host": "g.x"})))
+            return real(bruto, existentes)
+        with mock.patch.object(cfgmod, "validar", side_effect=validar_e_alguem_grava):
+            err = io.StringIO()
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+                code = cli.main(["modules", "--enable", "lock", "--home", str(self.home)], RAIZ)
+        self.assertEqual(code, 2)
+        self.assertIn("mudou enquanto era editado", err.getvalue())
+        self.assertEqual(self.gravada()["forge"], "gitlab")
+
+    def test_doctor_sem_config_do_pr_reviewer_nao_fala_do_backend(self):
+        escrever_config(self.home, "copilot-tudo")
+        cfg = cfgmod.carregar(self.cam, montar.modulos_existentes(RAIZ))
+        linhas = validate.checar(cfg, self.cam, run=lambda *a, **k: None, which=lambda b: None, env={})
+        self.assertFalse([l for l in linhas if "roda os agentes" in l[1]])
+
     def test_doctor_avisa_o_backend_fora_de_tools(self):
         escrever_config(self.home, "copilot-tudo")  # só o copilot: o claude, padrão do pr-reviewer, não está aqui
         self.com_config_do_pr({"workspaceRoot": os.path.expanduser("~/code")})

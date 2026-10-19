@@ -173,9 +173,8 @@ class _Dinamicos:
 def completar(ap, palavras, saida, raiz):
     """O `fluxo __complete`: imprime os candidatos e nunca levanta (um erro aqui viraria lixo no prompt)."""
     try:
-        itens = candidatos(ap, list(palavras), raiz)
-    except Exception:  # noqa: BLE001 — sem config, sem pasta, argv estragado: só não completa
-        itens = []
-    for valor, descricao in itens:
-        saida.write(f"{valor}\t{' '.join(str(descricao).split())}\n" if descricao else f"{valor}\n")
+        for valor, descricao in candidatos(ap, list(palavras), raiz):
+            saida.write(f"{valor}\t{' '.join(str(descricao).split())}\n" if descricao else f"{valor}\n")
+    except Exception:  # noqa: BLE001 — sem config, sem pasta, argv estragado, texto que não codifica: só não completa
+        pass
     return 0

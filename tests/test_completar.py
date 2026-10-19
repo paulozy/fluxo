@@ -69,6 +69,12 @@ class Candidatos(unittest.TestCase):
         (self.cam.dados / "planos" / "P-9.md").write_text("")
         self.assertEqual(self.valores("validate", "start", ""), ["P-9"])
 
+    def test_texto_que_nao_codifica_nao_quebra(self):
+        self.cam.estado.mkdir(parents=True, exist_ok=True)
+        (self.cam.estado / "tasks.jsonl").write_text(json.dumps({"id": "Q-\udc80"}) + "\n")
+        saida = io.TextIOWrapper(io.BytesIO(), encoding="utf-8")  # strict, como o stdout
+        self.assertEqual(completar.completar(cli.parser(), ["task", "--home", str(self.home), ""], saida, RAIZ), 0)
+
     def test_nunca_quebra(self):
         self.cam.config.write_text("{ estragada")
         self.assertEqual(self.valores("modules", "--enable", ""), [])

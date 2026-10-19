@@ -268,7 +268,7 @@ def em_ascii(texto):
 
 def rodape(tela, glifos=GLIFOS_UTF8):
     comum = "1-4 abas · ↑↓ escolher · Enter ir · q sair"
-    extra = {"session": " · f fixar · Tab próxima · PgUp/PgDn rolar",
+    extra = {"session": " · f fixar · Tab outra · PgUp/PgDn",  # em 80 colunas
              "task": " · ←→ outra tarefa", "list": " · f seguir · h esconder"}.get(tela.get("aba"), "")
     texto = comum + extra
     if glifos is GLIFOS_ASCII:

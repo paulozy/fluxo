@@ -243,6 +243,8 @@ class Teclas(unittest.TestCase):
         ascii_.encode("ascii")  # nada fora do ASCII
         self.assertIn("j/k", ascii_)
         self.assertIn("PgUp", vistas.rodape({"aba": "session"})[0][0])
+        for aba, _ in vistas.ABAS:
+            self.assertLessEqual(vistas.colunas(vistas.rodape({"aba": aba})[0][0]), 79)  # o 80x24 do Terminal.app
 
 
 class Revisao07(unittest.TestCase):

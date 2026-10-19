@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.12.0] — 2026-10-19
+
+### Adicionado
+
+- **`fluxo config`:** list, get, set, unset, edit e path, e o menu num terminal.
+- **`fluxo validate recipe` e `fluxo validate doctor`,** neste terminal.
+- **`fluxo status`,** que é também o `fluxo` sozinho.
+- **`fluxo --version`** e a ajuda agrupada.
+
 ## [0.11.0] — 2026-10-19
 
 ### Adicionado

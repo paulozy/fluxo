@@ -14,7 +14,8 @@ import sys
 from pathlib import Path
 
 from . import config as cfgmod
-from . import ajustes, assistente, doctor, empacotar, fonte, instalar, lock, messages, montar, panel, render, task, validate, varredura, vistas, watch
+from . import __version__
+from . import ajustes, assistente, doctor, empacotar, fonte, instalar, lock, messages, montar, panel, render, task, tmux, validate, varredura, vistas, watch
 
 ERROS_DE_USO = (cfgmod.ErroConfig, montar.ErroMontagem, render.ErroTemplate, fonte.ErroFonte)
 
@@ -543,6 +544,70 @@ def _montar(args, raiz):
     return cam, cfg, arquivos, avisos
 
 
+def cmd_status(args, raiz):
+    """O resumo da máquina, só com leitura local e rápida: é o `fluxo` sem comando, e vale também num agente."""
+    cam = _caminhos(args)
+    if not cam.config.exists():
+        print(f"fluxo {__version__}: sem config em {cam.exibir(cam.config)}. Comece com fluxo init; fluxo -h mostra os "
+              "comandos.")
+        return 0
+    try:
+        cfg = cfgmod.carregar(cam, montar.modulos_existentes(raiz))
+    except cfgmod.ErroConfig as exc:
+        print(f"fluxo {__version__}: a config não fecha: {exc}\nfluxo config edit corrige; fluxo doctor confere o resto.")
+        return 0
+    tools = ", ".join(t + (" (padrão)" if i == 0 and len(cfg["tools"]) > 1 else "") for i, t in enumerate(cfg["tools"]))
+    linhas = [("config", cam.exibir(cam.config)),
+              ("ferramentas", f"{tools} · {cfg['forge']} · {cfg['os']}"),
+              ("módulos", ", ".join(cfg["modules"]) or "nenhum (fluxo modules --enable)"),
+              ("install", _status_install(cfg, cam, raiz))]
+    if "task" in cfg["modules"]:
+        vivas = task.vivas(cam.estado, tmux.panes_vivos())
+        linhas.append(("sessões", ", ".join(f"{t.get('nome')} ({t.get('ferramenta') or '?'})" for t in vivas)
+                       if vivas else "nenhuma aberta"))
+    if "validate" in cfg["modules"]:
+        rodando = validate.execucoes(cam, rodando=True)
+        linhas.append(("validações", ", ".join(rodando) + " rodando" if rodando else "nenhuma rodando"))
+        linhas.append(("pr-reviewer", _status_pr_reviewer(cam)))
+    if "lock" in cfg["modules"]:
+        trava = lock.Trava(cam.estado)
+        dono = trava.ler()
+        linhas.append(("trava", lock.descrever(dono, bool(dono) and trava.vivo(dono))))
+    if "watch" in cfg["modules"]:
+        linhas.append(("watch", watch.status(cam).splitlines()[0].replace("watch: ", "", 1)))
+    largura = max(len(nome) for nome, _ in linhas)
+    print(f"fluxo {__version__}")
+    for nome, valor in linhas:
+        print(f"  {nome:<{largura}}  {valor}")
+    print("\nfluxo -h: os comandos · fluxo doctor: confere a máquina")
+    return 0
+
+
+def _status_install(cfg, cam, raiz):
+    try:
+        arquivos, _ = montar.montar(cfg, raiz, cam)
+        acoes = instalar.planejar(arquivos, instalar.ler_manifesto(cam.manifesto), cam.home)
+    except ERROS_DE_USO + (RuntimeError, OSError) as exc:
+        return f"não monta: {exc}"
+    pendentes = sum(a.tipo in (instalar.CRIAR, instalar.ATUALIZAR, instalar.REMOVER) for a in acoes)
+    conflitos = sum(a.tipo == instalar.CONFLITO for a in acoes)
+    if not pendentes and not conflitos:
+        return "em dia"
+    partes = ([f"{pendentes} arquivo(s) a gravar"] if pendentes else []) + ([f"{conflitos} conflito(s)"] if conflitos else [])
+    return ", ".join(partes) + ": fluxo install --dry-run mostra"
+
+
+def _status_pr_reviewer(cam):
+    try:
+        dados, _ = cfgmod.ler_json(validate.config_pr_reviewer(cam, os.environ))
+    except FileNotFoundError:
+        return "sem config: fluxo validate enable"
+    except cfgmod.ErroConfig as exc:
+        return str(exc)
+    return (f"backend {dados.get('backend') or 'claude (o padrão dele)'}"
+            + (f" · perfil {dados['profile']}" if dados.get("profile") else ""))
+
+
 def cmd_install(args, raiz):
     cam, cfg, arquivos, avisos = _montar(args, raiz)
     acoes = instalar.planejar(arquivos, instalar.ler_manifesto(cam.manifesto), cam.home)
@@ -621,11 +686,79 @@ def cmd_package(args, raiz):
     return 0
 
 
-def parser():
-    ap = argparse.ArgumentParser(prog="fluxo", description="o fluxo de dev portátil (Claude Code, Copilot CLI, Kiro CLI, Codex CLI)")
-    sub = ap.add_subparsers(dest="cmd", required=True)
+class Parser(argparse.ArgumentParser):
+    """O argparse do fluxo: a ajuda como foi escrita (os grupos e os exemplos vão no epilog), sem cor (a 3.14 liga
+    sozinha) e o erro com a dica do -h. Os subparsers herdam a classe: o parser_class do add_subparsers é type(self)."""
 
-    p = sub.add_parser("init", help="cria a config desta máquina (sem --tool e --forge, num terminal, pergunta)")
+    def __init__(self, *args, **kw):
+        kw.setdefault("formatter_class", argparse.RawDescriptionHelpFormatter)
+        kw["add_help"] = False  # o -h em português, abaixo
+        super().__init__(*args, **kw)
+        self.color = False
+        # os títulos das seções: "optional arguments" até a 3.9, "options" depois; aqui, os dois em português
+        self._positionals.title, self._optionals.title = "argumentos", "opções"
+        self.add_argument("-h", "--help", action="help", help="mostra esta ajuda")
+
+    def error(self, message):
+        # as três mensagens mais comuns do argparse, em português; o resto vai como vem. Só o começo é conferido:
+        # o "(choose from …)" muda de aspas entre patch releases
+        if "invalid choice: " in message:
+            valor = message.split("invalid choice: ", 1)[1].split(" (choose from", 1)[0].strip("'")
+            message = f"{valor!r} não existe aqui"
+        elif message.startswith("the following arguments are required: "):
+            message = "falta " + message.split(": ", 1)[1]
+        elif message.startswith("unrecognized arguments: "):
+            message = "não conheço " + message.split(": ", 1)[1]
+        self.print_usage(sys.stderr)
+        self.exit(2, f"{self.prog}: {message} ({self.prog} -h para a ajuda)\n")
+
+
+# o `fluxo -h`: os comandos por área (o argparse não agrupa subcomandos, gh-53587). O hook fica de fora: quem o
+# chama são as ferramentas
+GRUPOS = (("começar", ("init", "install", "doctor", "status")),
+          ("sessões", ("task", "panel", "watch", "lock", "msg")),
+          ("validação", ("validate",)),
+          ("config", ("config", "modules")),
+          ("manutenção", ("uninstall", "package", "scan")))
+NO_INPUT = "nunca abre o menu: o que faltar vira erro (também com CI definida, TERM=dumb ou num agente)"
+
+
+def _exemplos(*linhas):
+    return "exemplos:\n" + "\n".join(f"  {linha}" for linha in linhas)
+
+
+def _comuns(p, filho=False, no_input=False):
+    """O --home (dos testes; fica fora da ajuda) e o --no-input. No filho de uma ação vão com default=SUPPRESS, para
+    não apagar o que o pai já leu (gh-89398): valem `fluxo validate --home X start` e `fluxo validate start --home X`."""
+    extra = {"default": argparse.SUPPRESS} if filho else {}
+    p.add_argument("--home", help=argparse.SUPPRESS, **extra)
+    if no_input:
+        p.add_argument("--no-input", action="store_true", help=NO_INPUT, **extra)
+
+
+def parser():
+    resumos = {}
+    ap = Parser(prog="fluxo", usage="fluxo [<comando>] [-h]",
+                description="o fluxo de dev portátil (Claude Code, Copilot CLI, Kiro CLI, Codex CLI)")
+    ap.add_argument("--version", action="version", version=f"fluxo {__version__}", help="mostra a versão")
+    sub = ap.add_subparsers(dest="cmd", metavar="<comando>", help=argparse.SUPPRESS, prog="fluxo")
+    ap.set_defaults(fn=cmd_status)
+
+    def comando(nome, resumo, exemplos=(), **kw):
+        resumos[nome] = resumo
+        p = sub.add_parser(nome, help=resumo, description=resumo, epilog=_exemplos(*exemplos) if exemplos else None, **kw)
+        return p
+
+    def acoes(p, required=False):
+        return p.add_subparsers(dest="acao", metavar="<ação>", title="ações", required=required)
+
+    def acao(grupo, nome, resumo, exemplos=(), no_input=False):
+        a = grupo.add_parser(nome, help=resumo, description=resumo, epilog=_exemplos(*exemplos) if exemplos else None)
+        _comuns(a, filho=True, no_input=no_input)
+        return a
+
+    p = comando("init", "cria a config desta máquina; sem --tool e --forge, num terminal, pergunta",
+                ("fluxo init", "fluxo init --tool copilot --forge gitlab --gitlab-host gitlab.empresa.com.br"))
     # sem default nas flags: o assistente pergunta só o que não veio, e o cmd_init aplica os padrões
     p.add_argument("--tool", action="append", choices=cfgmod.TOOLS,
                    help="a ferramenta; repita para instalar várias (a primeira é a padrão do `fluxo task`)")
@@ -638,114 +771,180 @@ def parser():
     p.add_argument("--engine", choices=cfgmod.ENGINES, help="Kiro: v2 (padrão do 2.x) ou v3")
     p.add_argument("--gitlab-host", help="ex.: gitlab.empresa.com.br")
     p.add_argument("--promote-to", help="módulo promote: as bases depois da --base, em ordem (ex.: staging,main)")
-    p.add_argument("--force", action="store_true")
+    p.add_argument("--force", action="store_true", help="refaz uma config que já existe")
     p.add_argument("--no-input", action="store_true",
                    help="nunca pergunta: sem --tool e --forge, sai com erro (também com CI definida, TERM=dumb ou num agente)")
     p.set_defaults(fn=cmd_init, modulos=None)
 
-    p = sub.add_parser("install", help="grava instruções, agentes e skills no nível do usuário")
-    p.add_argument("--dry-run", action="store_true")
+    p = comando("install", "grava instruções, agentes e skills no nível do usuário",
+                ("fluxo install --dry-run   # mostra o que vai gravar", "fluxo install"))
+    p.add_argument("--dry-run", action="store_true", help="só mostra o que faria")
     p.add_argument("--force", action="store_true", help="grava por cima de conflito, com backup")
     p.add_argument("-v", "--verbose", action="store_true", help="lista também os arquivos iguais")
     p.set_defaults(fn=cmd_install)
 
-    p = sub.add_parser("uninstall", help="remove o que o fluxo instalou (o que você editou fica)")
-    p.add_argument("--dry-run", action="store_true")
+    p = comando("uninstall", "remove o que o fluxo instalou (o que você editou fica)")
+    p.add_argument("--dry-run", action="store_true", help="só mostra o que faria")
     p.set_defaults(fn=cmd_uninstall)
 
-    p = sub.add_parser("doctor", help="confere a máquina e a instalação")
+    p = comando("doctor", "confere a máquina e a instalação")
     p.set_defaults(fn=cmd_doctor)
 
-    p = sub.add_parser("package", help="zip para levar a uma máquina sem git")
+    p = comando("status", "o resumo da máquina: a config, os módulos, o install e o que está rodando (o `fluxo` sozinho)")
+    p.set_defaults(fn=cmd_status)
+
+    p = comando("package", "zip para levar a uma máquina sem git")
     p.add_argument("--output", help="pasta do zip (padrão: dist/)")
     p.set_defaults(fn=cmd_package)
 
-    p = sub.add_parser("modules", help="lista os módulos; --enable/--disable editam a config (sem nome, num terminal, "
-                       "abrem o menu)")
-    p.add_argument("--enable", nargs="*", metavar="MODULE")
-    p.add_argument("--disable", nargs="*", metavar="MODULE")
+    p = comando("modules", "lista os módulos; --enable e --disable editam a config (sem nome, num terminal, escolhe)",
+                ("fluxo modules", "fluxo modules --enable task lock", "fluxo modules --enable   # num terminal: o menu"))
+    p.add_argument("--enable", nargs="*", metavar="MODULE", help="liga; sem nome, escolhe entre os desligados")
+    p.add_argument("--disable", nargs="*", metavar="MODULE", help="desliga; sem nome, escolhe entre os ligados")
+    p.add_argument("--no-input", action="store_true", help=NO_INPUT)
     p.set_defaults(fn=cmd_modules)
 
-    p = sub.add_parser("config", help="mostra e muda a config (a do fluxo e duas chaves do pr-reviewer); sem ação, num "
-                       "terminal, abre o menu")
-    p.add_argument("acao", nargs="?", choices=("list", "get", "set", "unset", "edit", "path"))
-    p.add_argument("chave", nargs="?", metavar="KEY", help="ex.: task.max, models.copilot.strong, pr-reviewer.backend")
-    p.add_argument("valores", nargs="*", metavar="VALUE", help="set: o valor; a lista em vários, ou a,b")
-    p.add_argument("--json", action="store_true", help="list: em JSON, com a origem de cada valor")
-    p.set_defaults(fn=cmd_config)
+    p = comando("config", "mostra e muda a config (a do fluxo e duas chaves do pr-reviewer); sem ação, num terminal, "
+                "o menu", ("fluxo config", "fluxo config set task.max 3", "fluxo config set pr-reviewer.backend copilot",
+                           "fluxo config get tools", "fluxo config edit"))
+    p.add_argument("--no-input", action="store_true", help=NO_INPUT)
+    p.set_defaults(fn=cmd_config, acao=None, chave=None, valores=[], json=False)
+    g = acoes(p)
+    a = acao(g, "list", "cada chave, com o valor e a origem (padrão, config ou pr-reviewer)")
+    a.add_argument("--json", action="store_true", help="em JSON")
+    a = acao(g, "get", "o valor de uma chave; sem valor nem padrão, sai com 1")
+    a.add_argument("chave", metavar="KEY", help="ex.: task.max, models.copilot.strong, pr-reviewer.backend")
+    a = acao(g, "set", "muda uma chave, validando a config inteira", no_input=True)
+    a.add_argument("chave", metavar="KEY")
+    a.add_argument("valores", nargs="+", metavar="VALUE", help="o valor; a lista em vários, ou a,b")
+    a = acao(g, "unset", "volta a chave ao padrão", no_input=True)
+    a.add_argument("chave", metavar="KEY")
+    acao(g, "edit", "abre a config no editor ($VISUAL, $EDITOR ou vi) e só grava o que passa na validação", no_input=True)
+    acao(g, "path", "os caminhos da config do fluxo e da do pr-reviewer")
 
-    p = sub.add_parser("task", help="abre uma sessão numa janela do tmux (módulo task)")
+    p = comando("task", "abre uma sessão da ferramenta numa janela do tmux (módulo task); sem ID, num terminal, pergunta",
+                ("fluxo task PROJ-12                  # /planejar PROJ-12, numa vaga",
+                 "fluxo task PROJ-12 -p '/implementar PROJ-12'", "fluxo task -p '/revisar'           # avulsa",
+                 "fluxo task                          # num terminal: o menu", "fluxo task --list"))
     p.add_argument("id", nargs="?", help="ID da tarefa (ex.: a chave do card); sem ID é uma sessão avulsa")
     p.add_argument("-p", "--prompt", help="prompt inicial (com ID, o padrão é a skill planejar com o ID)")
     p.add_argument("-n", "--name", help="nome da sessão avulsa (padrão: o /comando, ou avulsa)")
     p.add_argument("--dir", help="pasta da sessão (padrão: code_dir)")
     p.add_argument("--target", help="sessão do tmux onde abrir (ex.: main:); obrigatório fora do tmux")
     p.add_argument("--force", action="store_true", help="abre mesmo sem vaga")
-    p.add_argument("--dry-run", action="store_true")
+    p.add_argument("--dry-run", action="store_true", help="só mostra a janela que abriria")
     p.add_argument("--list", action="store_true", help="lista as sessões vivas abertas pelo fluxo")
     p.add_argument("--tool", choices=cfgmod.TOOLS, help="a ferramenta da sessão (padrão: a primeira de tools)")
+    p.add_argument("--no-input", action="store_true", help=NO_INPUT)
     p.set_defaults(fn=cmd_task)
 
-    p = sub.add_parser("msg", help="copia uma mensagem para a área de transferência (módulo messages)")
-    p.add_argument("acao", choices=("copy", "tone"))
-    p.add_argument("arquivo", nargs="?", metavar="FILE", help="arquivo com a mensagem (padrão: stdin)")
-    p.set_defaults(fn=cmd_msg)
+    p = comando("msg", "copia uma mensagem para a área de transferência (módulo messages)",
+                ("fluxo msg tone", "fluxo msg copy aviso.md", "echo oi | fluxo msg copy"))
+    p.set_defaults(fn=cmd_msg, arquivo=None)
+    g = acoes(p, required=True)
+    a = acao(g, "copy", "copia o arquivo, ou o stdin")
+    a.add_argument("arquivo", nargs="?", metavar="FILE", help="arquivo com a mensagem (padrão: stdin)")
+    acao(g, "tone", "cria o tom.md, para você descrever como escreve")
 
-    p = sub.add_parser("lock", help="uma sessão por vez no stack local (módulo lock)")
-    p.add_argument("acao", choices=("acquire", "release", "status", "break", "run"))
-    p.add_argument("--id", help="a tarefa que segura a trava")
-    p.add_argument("--project", help="o projeto do docker compose (-p), para o break sugerir o down")
-    p.add_argument("--session", help="identidade da sessão (padrão: FLUXO_SESSION, a do Claude, ou o pane)")
-    p.add_argument("--pid", type=int, help="pid da ferramenta (padrão: o CLAUDE_PID, ou o avô deste processo)")
-    p.add_argument("--wait", type=int, default=0, help="segundos esperando a trava (padrão: só tenta)")
-    p.add_argument("--force", action="store_true", help="break: mesmo com o dono vivo")
-    p.set_defaults(fn=cmd_lock)
+    p = comando("lock", "uma sessão por vez no stack local (módulo lock)",
+                ("fluxo lock acquire --id PROJ-12 --project api-proj-12", "fluxo lock status", "fluxo lock release",
+                 "fluxo lock run --id PROJ-12 -- docker compose up -d"))
+    p.set_defaults(fn=cmd_lock, id=None, project=None, session=None, pid=None, wait=0, force=False)
+    g = acoes(p, required=True)
+    for nome, resumo in (("acquire", "pega a trava: 0 pegou (ou já era sua), 4 ocupada"),
+                         ("run", "pega, roda o comando depois de -- e solta")):
+        a = acao(g, nome, resumo)
+        a.add_argument("--id", help="a tarefa que segura a trava")
+        a.add_argument("--project", help="o projeto do docker compose (-p), para o break sugerir o down")
+        a.add_argument("--session", help="identidade da sessão (padrão: FLUXO_SESSION, a do Claude, ou o pane)")
+        a.add_argument("--pid", type=int, help="pid da ferramenta (padrão: o CLAUDE_PID, ou o avô deste processo)")
+        a.add_argument("--wait", type=int, default=0, help="segundos esperando a trava (padrão: só tenta)")
+    a = acao(g, "release", "solta a trava, se for desta sessão")
+    a.add_argument("--session", help="identidade da sessão (padrão: FLUXO_SESSION, a do Claude, ou o pane)")
+    acao(g, "status", "quem está com a trava")
+    a = acao(g, "break", "quebra a trava de um dono morto")
+    a.add_argument("--force", action="store_true", help="mesmo com o dono vivo")
 
-    p = sub.add_parser("watch", help="avisa das suas PRs/MRs (módulo watch); sem ação, mostra o status")
-    p.add_argument("acao", nargs="?", choices=("tick", "loop", "enable", "disable"))
-    p.add_argument("--interval", type=int, help="loop: segundos entre as passadas (padrão: watch.interval)")
-    p.add_argument("--target", help="enable no WSL: sessão do tmux onde abrir a janela do watch")
-    p.set_defaults(fn=cmd_watch)
+    p = comando("watch", "avisa das suas PRs/MRs (módulo watch); sem ação, mostra o status",
+                ("fluxo watch", "fluxo watch enable", "fluxo watch tick"))
+    p.set_defaults(fn=cmd_watch, acao=None, interval=None, target=None)
+    g = acoes(p)
+    acao(g, "tick", "uma passada (o launchd, o systemd ou o loop do WSL chamam)")
+    a = acao(g, "loop", "passadas sem parar (o WSL, numa janela do tmux)")
+    a.add_argument("--interval", type=int, help="segundos entre as passadas (padrão: watch.interval)")
+    a = acao(g, "enable", "agenda as passadas: launchctl no Mac, systemd no Linux, janela do tmux no WSL")
+    a.add_argument("--target", help="WSL: a sessão do tmux onde abrir a janela do watch")
+    acao(g, "disable", "tira o agendamento")
 
-    p = sub.add_parser("validate", help="o pr-reviewer (módulo validate): enable clona, start revisa em segundo plano, status acompanha")
-    p.add_argument("acao", nargs="?", choices=("enable", "disable", "exec", "start", "status", "stop", "recipe", "doctor",
-                                                "_rodar"),
-                   help="sem ação, num terminal, pergunta")
-    p.add_argument("alvo", nargs="?", metavar="ID", help="start/status/stop: a tarefa (ou --recipe <repo>); recipe: o repo")
-    p.add_argument("--profile", default="local", help="enable: o perfil da config do pr-reviewer que ele cria (padrão: local)")
-    p.add_argument("--recipe", metavar="REPO", help="start/status/stop: o runbook do repo, em vez da revisão da tarefa")
-    p.add_argument("--fix", action="store_true", help="recipe, start --recipe: refaz com o último --check que falhou")
-    p.add_argument("--check", action="store_true", help="recipe, start --recipe: sobe o stack com o runbook do perfil")
-    p.add_argument("--backend", choices=cfgmod.TOOLS, help="start, recipe, doctor: a ferramenta dos agentes do pr-review (padrão: o backend da config do pr-reviewer)")
-    p.add_argument("--wait", type=int, default=0, help="status: segundos esperando terminar (até 540); recipe --check: esperando a trava do stack")
-    p.set_defaults(fn=cmd_validate)
+    p = comando("validate", "o pr-reviewer (módulo validate): revisa e executa a mudança antes da PR/MR; sem ação, num "
+                "terminal, pergunta",
+                ("fluxo validate enable                      # traz o pr-reviewer",
+                 "fluxo validate start PROJ-12               # revisa em segundo plano",
+                 "fluxo validate status PROJ-12 --wait 540",
+                 "fluxo validate recipe api                  # o runbook do repo, neste terminal",
+                 "fluxo validate recipe api --check", "fluxo validate doctor"))
+    p.add_argument("--no-input", action="store_true", help=NO_INPUT)
+    p.set_defaults(fn=cmd_validate, acao=None, alvo=None, profile="local", recipe=None, fix=False, check=False,
+                   backend=None, wait=0)
+    g = acoes(p)
+    backend = dict(choices=cfgmod.TOOLS, help="a ferramenta dos agentes do pr-review (padrão: o backend da config dele)")
+    a = acao(g, "enable", "clona o pr-reviewer na tag desta versão, ou leva o clone para ela, e cria a config dele")
+    a.add_argument("--profile", default="local", help="o perfil da config do pr-reviewer que ele cria (padrão: local)")
+    acao(g, "disable", "tira o clone que o fluxo trouxe")
+    a = acao(g, "start", "revisa a tarefa, ou roda a receita do --recipe, em segundo plano", no_input=True)
+    a.add_argument("alvo", nargs="?", metavar="ID", help="a tarefa (precisa ter plano)")
+    a.add_argument("--recipe", metavar="REPO", help="a receita do repo, em vez da revisão da tarefa")
+    a.add_argument("--fix", action="store_true", help="--recipe: refaz com o último --check que falhou")
+    a.add_argument("--check", action="store_true", help="--recipe: sobe o stack com o runbook do perfil")
+    a.add_argument("--backend", **backend)
+    for nome, resumo in (("status", "acompanha uma execução: 0 terminou, 75 ainda rodando, 1 não há"),
+                         ("stop", "cancela uma execução; o pr-review derruba o stack antes de sair")):
+        a = acao(g, nome, resumo, no_input=True)
+        a.add_argument("alvo", nargs="?", metavar="ID", help="a tarefa")
+        a.add_argument("--recipe", metavar="REPO", help="a receita do repo")
+        if nome == "status":
+            a.add_argument("--wait", type=int, default=0, help="segundos esperando terminar (até 540)")
+    a = acao(g, "recipe", "o runbook do repo, neste terminal: propõe, mostra e pergunta antes de gravar", no_input=True)
+    a.add_argument("alvo", nargs="?", metavar="REPO", help="o repo (a pasta em code_dir); sem ele, num terminal, pergunta")
+    a.add_argument("--check", action="store_true", help="sobe o stack com o runbook do perfil, sem agente")
+    a.add_argument("--fix", action="store_true", help="refaz com o último --check que falhou")
+    a.add_argument("--backend", **backend)
+    a.add_argument("--wait", type=int, default=0, help="--check: segundos esperando a trava do stack")
+    a = acao(g, "doctor", "o doctor do pr-reviewer: o binário, o login e a sonda de contenção (chama o agente)")
+    a.add_argument("--backend", **backend)
+    acao(g, "exec", "roda o pr-review com os argumentos depois de --")
+    a = g.add_parser("_rodar")  # o processo de fundo que o start solta; sem help, fica fora da ajuda
+    _comuns(a, filho=True)
+    a.add_argument("alvo")
 
-    p = sub.add_parser("hook", help="(chamado pelas ferramentas) grava um evento para o painel")
+    p = sub.add_parser("hook")  # chamado pelas ferramentas; sem help, fica fora da ajuda
     p.add_argument("--tool", required=True)
     p.add_argument("--event", default="")
     p.set_defaults(fn=cmd_hook)
 
-    p = sub.add_parser("panel", help="as sessões ao vivo (módulo panel); enable/disable no Kiro V2")
-    p.add_argument("acao", nargs="?", choices=("enable", "disable"))
+    p = comando("panel", "as sessões ao vivo (módulo panel); enable e disable só no Kiro V2",
+                ("fluxo panel", "fluxo panel --text", "fluxo panel --view task --task PROJ-12"))
     p.add_argument("--text", action="store_true", help="imprime uma vez, sem a tela interativa")
     p.add_argument("--view", choices=[chave for chave, _ in vistas.ABAS],
                    help="a aba: session (a sessão seguida), task, global ou list (padrão)")
     p.add_argument("--task", help="a tarefa da aba task (padrão: a da sessão seguida, ou o plano mais novo)")
     p.add_argument("--follow", metavar="SESSION", help="o começo do id da sessão a seguir na aba session")
-    p.set_defaults(fn=cmd_panel)
+    p.set_defaults(fn=cmd_panel, acao=None)
+    g = acoes(p)
+    acao(g, "enable", "Kiro V2: o agente fluxo, com os hooks do painel, vira o padrão")
+    acao(g, "disable", "Kiro V2: volta o agente padrão de antes")
 
-    p = sub.add_parser("scan", help="procura dado de empresa no repo (o pre-commit roda)")
+    p = comando("scan", "procura dado de empresa no repo do fluxo (o pre-commit roda)")
     p.add_argument("--hash", metavar="TERM", help="só imprime o hash do termo, para o tests/proibidos.sha256")
     p.set_defaults(fn=cmd_scan)
 
-    for nome in ("init", "install", "uninstall", "doctor", "modules", "config", "task", "msg", "lock", "watch", "hook", "panel",
-                 "validate"):
-        sub.choices[nome].add_argument("--home", help="usa esta pasta no lugar do HOME para config, dados e "
-                                       "arquivos instalados (teste); o tmux e o ~ do code_dir continuam os reais")
-    for nome in ("modules", "config", "task", "validate"):
-        sub.choices[nome].add_argument("--no-input", action="store_true",
-                                       help="nunca abre o menu: o que faltar vira erro (também com CI definida, "
-                                       "TERM=dumb ou num agente)")
+    for nome, p in sub.choices.items():
+        if nome not in ("scan", "package"):
+            _comuns(p)
+    largura = max(len(n) for n in resumos)
+    ap.epilog = "\n\n".join(f"{grupo}:\n" + "\n".join(f"  {n:<{largura}}  {resumos[n]}" for n in nomes)
+                            for grupo, nomes in GRUPOS)
+    ap.epilog += "\n\nsem comando: o resumo da máquina (fluxo status). fluxo <comando> -h: a ajuda dele."
     return ap
 
 

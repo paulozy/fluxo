@@ -22,6 +22,8 @@ atexit.register(shutil.rmtree, os.environ["TMUX_TMPDIR"], True)
 # dele, então um comando sem argumento abriria o menu e esperaria resposta. O teste que quer o menu monta o
 # ambiente com ambiente_de_terminal(), que tira o CI.
 os.environ["CI"] = "1"
+# a ajuda do argparse quebra as linhas pela largura do terminal, e a 3.14 põe cor: fixos, para o teste não depender
+os.environ["COLUMNS"], os.environ["NO_COLOR"] = "100", "1"
 
 from fluxo import assistente  # noqa: E402
 from fluxo import config as cfgmod  # noqa: E402

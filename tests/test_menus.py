@@ -378,9 +378,10 @@ class Validate(unittest.TestCase):
         code, _, perguntas, ler, mocks, _ = self.validate("x", argv=["status", "--recipe", "api"])
         self.assertEqual((code, perguntas, ler.restantes), (0, "", ["x"]))
         self.assertEqual(mocks["status"].call_args[0][1], "receita/api")
-        for argv, erro in ((["start", "--fix", "--check"], "não combinam"), (["status", "--fix"], "são do --recipe")):
-            with self.subTest(argv=argv), self.assertRaisesRegex(config.ErroConfig, erro):
-                self.validate("api", "x", argv=argv)
+        with self.assertRaisesRegex(config.ErroConfig, "não combinam"):
+            self.validate("api", "x", argv=["start", "--fix", "--check"])
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):  # o status não tem --fix
+            self.validate("api", "x", argv=["status", "--fix"])
 
     def aqui(self, mocks):
         """(o argv do pr-review sem o node e o script, ch, trava) da chamada em primeiro plano."""

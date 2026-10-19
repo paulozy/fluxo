@@ -105,7 +105,10 @@ class Config(unittest.TestCase):
     def main(self, *argv):
         err = io.StringIO()
         with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
-            code = cli.main(["config", *argv, "--home", str(self.home)], RAIZ)
+            try:
+                code = cli.main(["config", *argv, "--home", str(self.home)], RAIZ)
+            except SystemExit as exc:  # o erro de uso do argparse
+                code = exc.code
         return code, err.getvalue()
 
     def com_config_do_pr(self, dados=None, modo=0o664):
@@ -159,7 +162,7 @@ class Config(unittest.TestCase):
                            (["set", "tools", "copilot,copilot"], "sem repetir"),
                            (["set", "forge", "bitbucket"], "não vale"),
                            (["set", "promote.targets", "main,main"], "sem repetir"),
-                           (["set", "git.base"], "fluxo config set git.base <valor>"),
+                           (["set", "git.base"], "falta VALUE"),
                            (["unset", "tools"], "é obrigatória")):
             with self.subTest(argv=argv):
                 code, err = self.main(*argv)

@@ -15,7 +15,7 @@ from pathlib import Path
 
 from . import config as cfgmod
 from . import __version__
-from . import ajustes, assistente, doctor, empacotar, fonte, instalar, lock, messages, montar, panel, render, task, tmux, validate, varredura, vistas, watch
+from . import ajustes, assistente, completar, doctor, empacotar, fonte, instalar, lock, messages, montar, panel, render, task, tmux, validate, varredura, vistas, watch
 
 ERROS_DE_USO = (cfgmod.ErroConfig, montar.ErroMontagem, render.ErroTemplate, fonte.ErroFonte)
 
@@ -544,6 +544,11 @@ def _montar(args, raiz):
     return cam, cfg, arquivos, avisos
 
 
+def cmd_completion(args, raiz):
+    print(completar.SCRIPTS[args.acao], end="")
+    return 0
+
+
 def cmd_status(args, raiz):
     """O resumo da máquina, só com leitura local e rápida: é o `fluxo` sem comando, e vale também num agente."""
     cam = _caminhos(args)
@@ -719,7 +724,7 @@ GRUPOS = (("começar", ("init", "install", "doctor", "status")),
           ("sessões", ("task", "panel", "watch", "lock", "msg")),
           ("validação", ("validate",)),
           ("config", ("config", "modules")),
-          ("manutenção", ("uninstall", "package", "scan")))
+          ("manutenção", ("uninstall", "package", "completion", "scan")))
 NO_INPUT = "nunca abre o menu: o que faltar vira erro (também com CI definida, TERM=dumb ou num agente)"
 
 
@@ -934,6 +939,14 @@ def parser():
     acao(g, "enable", "Kiro V2: o agente fluxo, com os hooks do painel, vira o padrão")
     acao(g, "disable", "Kiro V2: volta o agente padrão de antes")
 
+    p = comando("completion", "o script do completar com Tab, para o zsh ou o bash",
+                ("fluxo completion zsh > ~/.zfunc/_fluxo   # e no .zshrc, antes do compinit: fpath=(~/.zfunc $fpath)",
+                 "fluxo completion bash > ~/.local/share/bash-completion/completions/fluxo.bash"))
+    p.set_defaults(fn=cmd_completion)
+    g = acoes(p, required=True)
+    acao(g, "zsh", "o _fluxo, para uma pasta do fpath (ou: source <(fluxo completion zsh))")
+    acao(g, "bash", "para ~/.local/share/bash-completion/completions/fluxo.bash, que o bash-completion carrega sozinho")
+
     p = comando("scan", "procura dado de empresa no repo do fluxo (o pre-commit roda)")
     p.add_argument("--hash", metavar="TERM", help="só imprime o hash do termo, para o tests/proibidos.sha256")
     p.set_defaults(fn=cmd_scan)
@@ -964,6 +977,9 @@ def main(argv, raiz):
     argv, comando = list(argv), []
     if argv[:1] == ["hook"]:
         return _hook(argv, raiz)
+    if argv[:1] == ["__complete"]:  # o Tab do shell: nunca imprime erro e sempre sai com 0, como o hook
+        with contextlib.redirect_stderr(io.StringIO()):
+            return completar.completar(parser(), argv[1:], sys.stdout, Path(raiz))
     if argv[:2] in (["lock", "run"], ["validate", "exec"]) and "--" in argv:  # `fluxo lock run --id X -- docker compose up`
         i = argv.index("--")
         argv, comando = argv[:i], argv[i + 1:]

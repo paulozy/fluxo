@@ -657,6 +657,10 @@ fluxo validate recipe api --fix      # refaz com o último --check que falhou
 fluxo validate recipe                # sem repo: o menu pergunta o repo e o modo
 ```
 
+- **Na pergunta, `sim / editar / ajustar / não`:**
+  - `editar` abre a proposta no seu editor (`$VISUAL`, `$EDITOR` ou `vi`). A edição vale pelo schema completo do
+    runbook, como o arquivo do perfil, e volta a ser mostrada antes do `sim`.
+  - `ajustar` pede o que mudar, numa linha, e a IA refaz a proposta. O ajuste custa uma chamada do agente.
 - **O agente** é o backend da config do pr-reviewer; o `--backend <ferramenta>` troca só desta vez.
 - **Sem terminal, ou dentro de um agente,** o `recipe` vai com `--json`. Nada é gravado, e ele mostra o comando do
   `--apply`.

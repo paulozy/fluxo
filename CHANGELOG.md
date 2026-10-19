@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.12.2] — 2026-10-19
+
+### Mudado
+
+- **O `validate` fixa o pr-reviewer v0.7.0:** na receita, a pergunta vira `sim / editar / ajustar / não`.
+  - `editar` abre a proposta no seu editor. A edição vale como o arquivo do perfil, e só grava com o `sim` no
+    terminal.
+  - `ajustar` manda um pedido seu à IA, que refaz a proposta.
+  - O `fluxo validate enable` leva o clone para a tag nova. A skill `/receita` não muda: ela roda sem terminal.
+
 ## [0.12.1] — 2026-10-19
 
 ### Corrigido

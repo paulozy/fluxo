@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.12.1] — 2026-10-19
+
+### Corrigido
+
+- **O `validate` fixa o pr-reviewer v0.6.1,** que acha o login do Copilot no keychain do macOS. Antes, num Mac, o
+  `validate recipe`, o `doctor` e o `/validar` saíam com "No authentication information found", mesmo com o Copilot
+  logado. O `fluxo validate enable` leva o clone para a tag nova.
+
 ## [0.12.0] — 2026-10-19
 
 ### Adicionado

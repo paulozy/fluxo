@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.11.0] — 2026-10-19
+
+### Adicionado
+
+- **Menus no `task`, no `modules` e no `validate`.** Num terminal, quando falta o que o comando precisa, ele
+  pergunta no estilo do `init`: o número ou o nome, com o Enter aceitando o padrão. No fim, mostra o comando que
+  faz o mesmo sem o menu.
+  - `fluxo task` sem ID pergunta a ação (planejar, implementar, concluir ou um prompt livre) e o ID; com `-n`, só o
+    prompt; com um `-p` de tarefa sem ID, só o ID (o que o prompt já trouxer é o padrão).
+  - `fluxo modules --enable` ou `--disable` sem nome mostra os desligados, ou os ligados, para escolher. O `fluxo
+    modules` sozinho continua listando.
+  - `fluxo validate` sem ação pergunta a ação. O `start` sem alvo pergunta a tarefa (com plano) ou o repo e o modo
+    da receita. O `status` e o `stop` sem alvo escolhem entre as execuções registradas.
+  - **Ctrl-C ou EOF** cancela com saída 130, sem abrir nem gravar nada.
+- **`--no-input` no `task`, no `modules` e no `validate`.**
+
+### Mudado
+
+- **Dentro de um agente, o fluxo nunca pergunta, nem com terminal,** e isso vale também para o `init`. As marcas
+  são `AI_AGENT`, `CLAUDE_CODE_CHILD_SESSION`, `CODEX_CI`, `CODEX_THREAD_ID`, `COPILOT_CLI`, `AGENT_CONTEXT_OUT` e
+  `AGENT_DISPLAY_OUT`. O motivo: o Codex dá terminal quando o modelo pede, e o Kiro, de código fechado, pode herdar
+  o stdin. O `docs/validacao.md` tem o teste no Kiro.
+- **Sem terminal,** o erro e a saída 2 continuam os de sempre. Mudam só duas mensagens:
+  - `fluxo validate` sem ação: era o uso do argparse, e agora diz quais são as ações;
+  - `--enable` ou `--disable` sem nome: era o "expected at least one argument", e agora diz que falta o módulo.
+
 ## [0.10.0] — 2026-10-18
 
 ### Mudado

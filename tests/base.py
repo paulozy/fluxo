@@ -1,5 +1,6 @@
 """Comum aos testes: o lib/ no sys.path e os cenários de config das quatro combinações."""
 import atexit
+import io
 import json
 import os
 import shutil
@@ -17,7 +18,12 @@ os.environ.pop("TMUX", None)
 os.environ.pop("TMUX_PANE", None)
 os.environ["TMUX_TMPDIR"] = os.path.realpath(tempfile.mkdtemp(prefix="fxt", dir="/tmp"))
 atexit.register(shutil.rmtree, os.environ["TMUX_TMPDIR"], True)
+# Nem com o terminal do usuário: um mock.patch("sys.stdout") tem isatty() verdadeiro, e o stdin ainda é o terminal
+# dele, então um comando sem argumento abriria o menu e esperaria resposta. O teste que quer o menu monta o
+# ambiente com ambiente_de_terminal(), que tira o CI.
+os.environ["CI"] = "1"
 
+from fluxo import assistente  # noqa: E402
 from fluxo import config as cfgmod  # noqa: E402
 
 CENARIOS = {
@@ -67,3 +73,34 @@ def arvore(home, pastas=PASTAS_FERRAMENTA):
             if p.is_file():
                 out[p.relative_to(home).as_posix()] = p.read_bytes()
     return out
+
+
+def roteiro(*respostas):
+    """Uma resposta por pergunta; uma exceção na lista é levantada, e o fim da lista vira EOF (Ctrl-D)."""
+    fila = list(respostas)
+
+    def ler():
+        if not fila:
+            raise EOFError
+        r = fila.pop(0)
+        if isinstance(r, type) and issubclass(r, BaseException):
+            raise r
+        return r
+    ler.restantes = fila
+    return ler
+
+
+class Terminal(io.StringIO):
+    def __init__(self, tty=True):
+        super().__init__()
+        self.tty = tty
+
+    def isatty(self):
+        return self.tty
+
+
+def ambiente_de_terminal():
+    """O os.environ de quem digita num terminal: sem CI e sem as marcas de agente (a suíte roda dentro de um)."""
+    ambiente = {k: v for k, v in os.environ.items() if k != "CI" and k not in assistente.AGENTES}
+    ambiente["TERM"] = "xterm"
+    return ambiente

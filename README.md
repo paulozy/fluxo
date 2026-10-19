@@ -59,6 +59,11 @@ perguntados de novo, com os ligados de padrão. As opções deles (`task`, `watc
 
 Sem terminal, com `--no-input`, com a variável `CI` ou com `TERM=dumb`, o `init` nunca pergunta. Nesses casos,
 faltar `--tool` ou `--forge` é erro de uso, com saída 2. Uma config que já existe só é refeita com `--force`.
+Também não pergunta dentro de um agente: as marcas que Claude Code, Codex, Copilot e Kiro põem nos comandos que
+rodam (`AI_AGENT`, `CODEX_CI`, `COPILOT_CLI` etc.) desligam as perguntas.
+
+A mesma regra vale para os menus. Num terminal, `fluxo task` sem ID, `fluxo validate` sem ação ou sem alvo e
+`fluxo modules --enable` ou `--disable` sem nome perguntam o que falta, no lugar do erro.
 
 O `init` grava `~/.config/fluxo/config.json`:
 

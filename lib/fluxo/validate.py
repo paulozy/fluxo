@@ -352,6 +352,7 @@ ESPERA = 3600
 TIPOS = ("revisao", "receita")
 NOME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,60}$")
 REPO_RE = re.compile(r"^(?!\.{1,2}$)[A-Za-z0-9_.-]+$")  # o mesmo do --local do pr-reviewer (cli.ts), em ASCII
+RECEITA_RE = re.compile(r"[A-Za-z0-9_-]+")  # o repo do --recipe
 
 
 def chave(tipo, nome):
@@ -376,6 +377,17 @@ def _rodando(pasta):
         return False
     agora = lock.inicio_do_pid(pid)
     return agora is not None and (not fase.get("inicio") or not agora or agora == fase["inicio"])
+
+
+def execucoes(cam, rodando=False):
+    """As chaves com pedido gravado, da mais nova para a mais velha; com `rodando`, só as que ainda rodam."""
+    achadas = []
+    for tipo in TIPOS:
+        for pasta in (cam.estado / "validar" / tipo).glob("*"):
+            pedido = pasta / "pedido.json"
+            if NOME_RE.fullmatch(pasta.name) and pedido.is_file() and (not rodando or _rodando(pasta)):
+                achadas.append((pedido.stat().st_mtime, f"{tipo}/{pasta.name}"))
+    return [ch for _, ch in sorted(achadas, reverse=True)]
 
 
 def _backend(backend):
@@ -431,7 +443,7 @@ def preparar_revisao(cfg, cam, id_, backend, run=subprocess.run, env=None):
 
 
 def preparar_receita(cfg, cam, repo, modo, backend):
-    if not re.fullmatch(r"[A-Za-z0-9_-]+", repo or ""):
+    if not RECEITA_RE.fullmatch(repo or ""):
         raise cfgmod.ErroConfig(f"nome de repo inválido: {repo!r}")
     extra = {"proposta": [], "fix": ["--fix"], "check": ["--check"]}[modo]
     # o --check não roda agente, e o pr-review recusa --backend com ele

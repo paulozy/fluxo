@@ -1,13 +1,14 @@
 """Linha de comando do fluxo.
 
-Saídas: 0 ok; 1 erro; 2 config ou uso inválido; 3 conflito (nada foi gravado); 130 o init interativo
-cancelado (EOF ou Ctrl-C).
+Saídas: 0 ok; 1 erro; 2 config ou uso inválido; 3 conflito (nada foi gravado); 130 uma pergunta cancelada (EOF
+ou Ctrl-C), no init ou num menu.
 """
 import argparse
 import contextlib
 import io
 import json
 import os
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -30,20 +31,72 @@ def _carregar(args, raiz, modulo=None):
     return cam, cfg
 
 
+def _perguntas(args, ler, saida, interativo):
+    """As Perguntas, se dá para perguntar aqui; senão None, e o comando segue com o erro de sempre."""
+    if interativo is None:
+        interativo = assistente.pode_perguntar(args, sys.stdin, sys.stdout, os.environ)
+    return assistente.Perguntas(ler, saida or sys.stderr) if interativo else None
+
+
+def _dica(args):
+    """O fim da mensagem quando falta algo e não deu para perguntar."""
+    motivo = assistente.desligado(args, os.environ)
+    return f"{motivo} desliga as perguntas" if motivo else "ou rode num terminal para escolher"
+
+
+def _o_mesmo(perguntas, argv):
+    """O comando que faz o mesmo sem o menu, para a próxima vez."""
+    perguntas.escrever("o mesmo, sem menu: " + shlex.join(["fluxo", *argv]))
+
+
+def _cancelado(perguntas, o_que):
+    perguntas.escrever(f"\ncancelado; {o_que}")
+    return 130
+
+
 def _adaptador(raiz, tool):
     return json.loads((Path(raiz) / "adaptadores" / "ferramenta" / f"{tool}.json").read_text(encoding="utf-8"))
 
 
-def cmd_modules(args, raiz):
+def _config_bruta(cam):
+    try:
+        return json.loads(cam.config.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        raise cfgmod.ErroConfig(f"sem config em {cam.config}: rode `fluxo init` antes")
+    except ValueError as exc:
+        raise cfgmod.ErroConfig(f"{cam.config} não é JSON válido: {exc}")
+
+
+def cmd_modules(args, raiz, ler=input, saida=None, interativo=None):
     cam = _caminhos(args)
     existentes = montar.modulos_existentes(raiz)
-    if args.enable or args.disable:
+    vazias = [flag for flag, valor in (("--enable", args.enable), ("--disable", args.disable)) if valor == []]
+    if vazias:  # `--enable` sem nome: o menu escolhe
+        perguntas = _perguntas(args, ler, saida, interativo)
+        if not perguntas:
+            print(f"fluxo modules: {' e '.join(vazias)} sem módulo ({_dica(args)})", file=sys.stderr)
+            return 2
+        bruto = _config_bruta(cam)
+        antes = bruto.get("modules") if isinstance(bruto, dict) and isinstance(bruto.get("modules"), list) else []
+        # um módulo que não existe mais (de uma versão antiga) não impede o menu, e o --disable o oferece
+        cfg = cfgmod.validar(dict(bruto, modules=[m for m in antes if m in existentes]) if isinstance(bruto, dict)
+                             else bruto, existentes)
+        extintos = [m for m in antes if m not in existentes]
         try:
-            bruto = json.loads(cam.config.read_text(encoding="utf-8"))
-        except FileNotFoundError:
-            raise cfgmod.ErroConfig(f"sem config em {cam.config}: rode `fluxo init` antes")
-        except ValueError as exc:
-            raise cfgmod.ErroConfig(f"{cam.config} não é JSON válido: {exc}")
+            for flag in ("enable", "disable"):
+                if getattr(args, flag) == []:
+                    setattr(args, flag, assistente.menu_modulos(perguntas, cfg, existentes, raiz, flag == "enable",
+                                                                extintos))
+        except (assistente.Cancelado, KeyboardInterrupt):
+            return _cancelado(perguntas, "nada foi gravado")
+        if not (args.enable or args.disable):
+            perguntas.escrever("nada foi gravado")
+            return 0
+        _o_mesmo(perguntas, ["modules", *(["--enable", *args.enable] if args.enable else []),
+                             *(["--disable", *args.disable] if args.disable else []),
+                             *(["--home", args.home] if args.home else [])])
+    if args.enable or args.disable:
+        bruto = _config_bruta(cam)
         ligados = [m for m in bruto.get("modules", []) if m not in (args.disable or [])]
         ligados = list(dict.fromkeys(ligados + list(args.enable or [])))  # sem repetir: duplicaria as instruções
         bruto["modules"] = ligados
@@ -60,7 +113,17 @@ def cmd_modules(args, raiz):
     return 0
 
 
-def cmd_task(args, raiz):
+def _argv_task(args):
+    argv = ["task", *([args.id] if args.id else [])]
+    if args.prompt:  # `-p -x` o argparse lê como outra flag
+        argv += [f"--prompt={args.prompt}"] if args.prompt.startswith("-") else ["-p", args.prompt]
+    for flag, valor in (("-n", args.name), ("--tool", args.tool), ("--dir", args.dir), ("--target", args.target),
+                        ("--home", args.home)):
+        argv += [flag, valor] if valor else []
+    return argv + [flag for flag, ligada in (("--force", args.force), ("--dry-run", args.dry_run)) if ligada]
+
+
+def cmd_task(args, raiz, ler=input, saida=None, interativo=None):
     cam, cfg = _carregar(args, raiz, "task")
     if args.list:
         return task.listar(cam)
@@ -69,11 +132,23 @@ def cmd_task(args, raiz):
         print(f"fluxo task: {tool} não está em tools ({', '.join(cfg['tools'])}); acrescente na config e rode "
               "fluxo install", file=sys.stderr)
         return 2
+    adapt, skills = _adaptador(raiz, tool), montar.nomes_de_skills(raiz)
+    # sem ID, falta a ação (sem -p) ou o ID de um -p de tarefa; sem terminal, o resolver dá o erro de sempre
+    falta = args.id is None and (not (args.prompt or "").strip()
+                                 or (task.skill_de_tarefa(args.prompt, adapt["prefixo"]) and not args.name))
+    perguntas = _perguntas(args, ler, saida, interativo) if falta else None
     pasta = Path(args.dir or os.path.expanduser(cfg["code_dir"]))
     try:
-        return task.abrir(args.id, args.prompt, args.name, cfg, tool, _adaptador(raiz, tool), cam, pasta, alvo=args.target,
+        if perguntas:
+            try:
+                args.id, args.prompt = assistente.menu_task(perguntas, adapt["prefixo"], skills,
+                                                            (args.prompt or "").strip() or None, args.name)
+            except (assistente.Cancelado, KeyboardInterrupt):
+                return _cancelado(perguntas, "nenhuma sessão foi aberta")
+            _o_mesmo(perguntas, _argv_task(args))
+        return task.abrir(args.id, args.prompt, args.name, cfg, tool, adapt, cam, pasta, alvo=args.target,
                           forcar=args.force, dry_run=args.dry_run, dentro_do_tmux=bool(os.environ.get("TMUX")),
-                          skills=montar.nomes_de_skills(raiz))
+                          skills=skills)
     except task.ErroUso as exc:
         print(f"fluxo task: {exc}", file=sys.stderr)
         return 2
@@ -164,15 +239,50 @@ def cmd_watch(args, raiz):
     return code
 
 
-def cmd_validate(args, raiz):
+def _argv_validate(args):
+    argv = ["validate", args.acao, *([args.alvo] if args.alvo else [])]
+    for flag, valor in (("--recipe", args.recipe), ("--backend", args.backend), ("--home", args.home),
+                        ("--profile", args.profile if args.profile != "local" else None),
+                        ("--wait", str(args.wait) if args.wait else None)):
+        argv += [flag, valor] if valor else []
+    return argv + [flag for flag, ligada in (("--fix", args.fix), ("--check", args.check)) if ligada]
+
+
+def cmd_validate(args, raiz, ler=input, saida=None, interativo=None):
+    perguntas = None
+    if args.acao is None:
+        perguntas = _perguntas(args, ler, saida, interativo)
+        if not perguntas:
+            print(f"fluxo validate: falta a ação: enable, disable, start, status, stop ou exec ({_dica(args)})",
+                  file=sys.stderr)
+            return 2
+        try:
+            args.acao = assistente.menu_validate_acao(perguntas)
+        except (assistente.Cancelado, KeyboardInterrupt):
+            return _cancelado(perguntas, "nada foi feito")
     # o disable vale com o módulo desligado: é o que tira o clone depois de desligá-lo
     cam, cfg = _carregar(args, raiz, None if args.acao == "disable" else "validate")
-    if (args.fix or args.check) and not args.recipe:
-        raise cfgmod.ErroConfig("--fix e --check são do --recipe")
     if args.fix and args.check:
         raise cfgmod.ErroConfig("--fix e --check não combinam")
     if args.recipe and args.alvo:
         raise cfgmod.ErroConfig("é a tarefa ou o --recipe <repo>, não os dois")
+    modo = "fix" if args.fix else "check" if args.check else None
+    # o menu do alvo só onde ele resolve: no start, o --fix/--check já diz receita; no status e no stop, não cabe
+    if args.acao in ("start", "status", "stop") and not (args.alvo or args.recipe) and (args.acao == "start" or not modo):
+        perguntas = perguntas or _perguntas(args, ler, saida, interativo)
+        if perguntas:  # sem terminal, segue para o erro de sempre
+            try:
+                alvo = assistente.menu_validate_alvo(perguntas, cam, args.acao, modo)
+            except (assistente.Cancelado, KeyboardInterrupt):
+                return _cancelado(perguntas, "nada foi feito")
+            if alvo is None:
+                return 1
+            args.alvo, args.recipe, modo = alvo
+            args.fix, args.check = modo == "fix", modo == "check"
+    if perguntas:
+        _o_mesmo(perguntas, _argv_validate(args))
+    if modo and not args.recipe:
+        raise cfgmod.ErroConfig("--fix e --check são do --recipe")
     if args.acao == "exec":
         argv = validate.comando(cfg, cam, args.comando)
         os.execvp(argv[0], argv)
@@ -435,7 +545,7 @@ def parser():
     p.add_argument("--promote-to", help="módulo promote: as bases depois da --base, em ordem (ex.: staging,main)")
     p.add_argument("--force", action="store_true")
     p.add_argument("--no-input", action="store_true",
-                   help="nunca pergunta: sem --tool e --forge, sai com erro (também com CI definida ou TERM=dumb)")
+                   help="nunca pergunta: sem --tool e --forge, sai com erro (também com CI definida, TERM=dumb ou num agente)")
     p.set_defaults(fn=cmd_init, modulos=None)
 
     p = sub.add_parser("install", help="grava instruções, agentes e skills no nível do usuário")
@@ -455,9 +565,10 @@ def parser():
     p.add_argument("--output", help="pasta do zip (padrão: dist/)")
     p.set_defaults(fn=cmd_package)
 
-    p = sub.add_parser("modules", help="lista os módulos; --enable/--disable editam a config")
-    p.add_argument("--enable", nargs="+", metavar="MODULE")
-    p.add_argument("--disable", nargs="+", metavar="MODULE")
+    p = sub.add_parser("modules", help="lista os módulos; --enable/--disable editam a config (sem nome, num terminal, "
+                       "abrem o menu)")
+    p.add_argument("--enable", nargs="*", metavar="MODULE")
+    p.add_argument("--disable", nargs="*", metavar="MODULE")
     p.set_defaults(fn=cmd_modules)
 
     p = sub.add_parser("task", help="abre uma sessão numa janela do tmux (módulo task)")
@@ -494,7 +605,8 @@ def parser():
     p.set_defaults(fn=cmd_watch)
 
     p = sub.add_parser("validate", help="o pr-reviewer (módulo validate): enable clona, start revisa em segundo plano, status acompanha")
-    p.add_argument("acao", choices=("enable", "disable", "exec", "start", "status", "stop", "_rodar"))
+    p.add_argument("acao", nargs="?", choices=("enable", "disable", "exec", "start", "status", "stop", "_rodar"),
+                   help="sem ação, num terminal, pergunta")
     p.add_argument("alvo", nargs="?", metavar="ID", help="start/status/stop: a tarefa (ou --recipe <repo>)")
     p.add_argument("--profile", default="local", help="enable: o perfil da config do pr-reviewer que ele cria (padrão: local)")
     p.add_argument("--recipe", metavar="REPO", help="start/status/stop: o runbook do repo, em vez da revisão da tarefa")
@@ -525,6 +637,10 @@ def parser():
     for nome in ("init", "install", "uninstall", "doctor", "modules", "task", "msg", "lock", "watch", "hook", "panel", "validate"):
         sub.choices[nome].add_argument("--home", help="usa esta pasta no lugar do HOME para config, dados e "
                                        "arquivos instalados (teste); o tmux e o ~ do code_dir continuam os reais")
+    for nome in ("modules", "task", "validate"):
+        sub.choices[nome].add_argument("--no-input", action="store_true",
+                                       help="nunca abre o menu: o que faltar vira erro (também com CI definida, "
+                                       "TERM=dumb ou num agente)")
     return ap
 
 

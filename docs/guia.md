@@ -126,6 +126,9 @@ config gravada em ~/.config/fluxo/config.json. Agora:
 - **Ctrl-C** cancela sem gravar nada, com saída 130.
 - **Sem terminal,** ou com `--no-input`, `CI` ou `TERM=dumb`, o `init` não pergunta, e faltar `--tool` ou
   `--forge` é erro de uso (saída 2).
+- **Dentro de um agente também não:** com `AI_AGENT`, `CLAUDE_CODE_CHILD_SESSION`, `CODEX_CI`, `CODEX_THREAD_ID`, `COPILOT_CLI`, `AGENT_CONTEXT_OUT` ou `AGENT_DISPLAY_OUT`, que as ferramentas põem nos comandos que rodam, o fluxo
+  nunca pergunta, nem com terminal. Assim, uma sessão que roda `fluxo` não trava esperando resposta.
+- **A mesma regra vale para os menus** do `task`, do `modules` e do `validate` (seções 4 e 5).
 
 **Em script, sem perguntas,** passe as flags. Com `--tool` e `--forge`, nada é perguntado:
 
@@ -418,8 +421,12 @@ Para ligar ou desligar um módulo, rode `fluxo init` de novo ou:
 fluxo modules                          # lista, com [x] nos ligados
 fluxo modules --enable task lock       # liga
 fluxo modules --disable watch          # desliga
+fluxo modules --enable                 # sem nome, num terminal: escolhe entre os desligados
 fluxo install                          # aplica
 ```
+
+Sem nome, o `--enable` mostra os desligados, e recusa o que as ferramentas da config não atendem; o `--disable`
+mostra os ligados. Enter, ou "nenhum", sai sem gravar nada.
 
 ### `task`: sessões no tmux
 
@@ -430,7 +437,18 @@ fluxo task PROJ-12 -p '/implementar PROJ-12'
 fluxo task -p '/revisar'                   # avulsa: não ocupa vaga; o nome vem da skill (revisar)
 fluxo task --list                          # as sessões vivas
 fluxo task PROJ-12 --target main:          # fora do tmux, numa sessão já aberta
+fluxo task                                 # num terminal: pergunta a ação e o ID
 ```
+
+**Sem ID, num terminal, o `task` pergunta o que falta:**
+- **sem nada:** a ação (planejar, implementar, concluir ou um prompt livre) e o ID, que só o prompt livre
+  dispensa;
+- **com `-n`:** só o prompt;
+- **com um `-p` de tarefa** (`-p /implementar`): só o ID. Se o prompt é só a skill, ele ganha o ID; se já traz
+  um ID, esse é o padrão.
+
+No fim, ele mostra o comando que faz o mesmo sem o menu. Sem terminal, ou dentro de um agente, falta de ID é erro
+de uso, como sempre.
 
 **Saídas:**
 - **0:** a sessão abriu;
@@ -438,7 +456,8 @@ fluxo task PROJ-12 --target main:          # fora do tmux, numa sessão já aber
 - **2:** uso inválido;
 - **3:** fora do tmux e sem `--target`;
 - **4:** não há vaga, ou já existe uma sessão viva com esse nome. O `--force` só passa do limite de vagas; com
-  uma sessão viva de mesmo nome, vá até ela ou feche-a.
+  uma sessão viva de mesmo nome, vá até ela ou feche-a;
+- **130:** o menu foi cancelado, e nada abriu.
 
 No Codex, o prompt é `'$implementar PROJ-12'`, entre aspas simples por causa do `$`.
 
@@ -587,7 +606,16 @@ fluxo validate status PROJ-12 --wait 540       # espera até 540 s; 75 = ainda r
 fluxo validate stop PROJ-12                    # cancela; o pr-reviewer derruba o stack antes de sair
 fluxo validate start --recipe api --check      # o --check da receita
 fluxo validate status --recipe api
+fluxo validate                                 # num terminal: pergunta a ação e o alvo
 ```
+
+**O que o menu pergunta:**
+- **Sem ação:** enable, disable, start, status ou stop. O `exec` fica de fora, porque precisa do `-- …`.
+- **`start` sem alvo:** tarefa ou receita.
+  - Na tarefa, o ID, que precisa ter plano.
+  - Na receita, o repo e o modo: proposta, `--check` ou `--fix`.
+- **`status` ou `stop` sem alvo:** a execução, entre as registradas. A mais nova é o padrão, e o `stop` só
+  mostra as que rodam.
 
 **As saídas do `status`:**
 - **0:** terminou. A primeira linha é `veredito: …`, depois vêm os motivos e o caminho do `report.md`;
@@ -653,13 +681,13 @@ fluxo doctor
 | `fluxo install [--dry-run] [--force] [-v]` | grava instruções, agentes e skills |
 | `fluxo uninstall [--dry-run]` | tira o que o fluxo gravou; o que você editou fica |
 | `fluxo doctor` | confere a máquina |
-| `fluxo modules [--enable …] [--disable …]` | lista, liga e desliga módulos |
-| `fluxo task <ID> [-p …] [--tool …] [--list]` | sessões no tmux (módulo `task`) |
+| `fluxo modules [--enable …] [--disable …]` | lista, liga e desliga módulos; sem nome, num terminal, pergunta |
+| `fluxo task [<ID>] [-p …] [--tool …] [--list]` | sessões no tmux (módulo `task`); sem ID, num terminal, pergunta |
 | `fluxo msg tone \| copy` | o tom e a área de transferência (módulo `messages`) |
 | `fluxo lock acquire \| release \| status \| break \| run` | a trava do stack (módulo `lock`) |
 | `fluxo watch [tick \| enable \| disable]` | aviso das PRs/MRs (módulo `watch`) |
 | `fluxo panel [enable \| disable] [--text]` | o painel (módulo `panel`) |
-| `fluxo validate enable \| disable \| start \| status \| stop \| exec` | o pr-reviewer (módulo `validate`) |
+| `fluxo validate [enable \| disable \| start \| status \| stop \| exec]` | o pr-reviewer (módulo `validate`); sem ação, num terminal, pergunta |
 | `fluxo package` | o zip para máquina sem git |
 | `fluxo scan` | procura dado de empresa no repo do fluxo |
 
@@ -673,7 +701,7 @@ fluxo doctor
 | 3 | conflito no install, nada gravado; no `task`, fora do tmux |
 | 4 | ocupado: sem vaga no `task`, trava de outra sessão no `lock` |
 | 75 | `validate status`: ainda rodando |
-| 130 | `init` cancelado com Ctrl-C ou EOF |
+| 130 | uma pergunta cancelada com Ctrl-C ou EOF: no `init`, nada gravado; num menu, nada feito |
 
 ### Onde fica cada coisa
 

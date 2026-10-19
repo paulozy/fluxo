@@ -11,32 +11,8 @@ from argparse import Namespace
 from pathlib import Path
 from unittest import mock
 
-from base import RAIZ, escrever_config
+from base import RAIZ, Terminal, ambiente_de_terminal, escrever_config, roteiro
 from fluxo import assistente, cli, config, montar
-
-
-def roteiro(*respostas):
-    """Uma resposta por pergunta; uma exceção na lista é levantada, e o fim da lista vira EOF (Ctrl-D)."""
-    fila = list(respostas)
-
-    def ler():
-        if not fila:
-            raise EOFError
-        r = fila.pop(0)
-        if isinstance(r, type) and issubclass(r, BaseException):
-            raise r
-        return r
-    ler.restantes = fila
-    return ler
-
-
-class Terminal(io.StringIO):
-    def __init__(self, tty=True):
-        super().__init__()
-        self.tty = tty
-
-    def isatty(self):
-        return self.tty
 
 
 class Init(unittest.TestCase):
@@ -128,7 +104,9 @@ class Init(unittest.TestCase):
         self.assertEqual((code, perguntas, ler.restantes), (2, "", ["claude"]))
         self.assertFalse(self.cam.config.exists())
         err = io.StringIO()
-        with contextlib.redirect_stderr(err), contextlib.redirect_stdout(io.StringIO()):
+        # sem as marcas de agente: dentro de um, a dica seria a variável dele
+        with mock.patch.dict(os.environ, ambiente_de_terminal(), clear=True), contextlib.redirect_stderr(err), \
+                contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(cli.main(["init", "--home", str(self.home), "--forge", "github"], RAIZ), 2)
         self.assertIn("falta --tool (ou rode num terminal", err.getvalue())
 
@@ -233,8 +211,7 @@ class Init(unittest.TestCase):
     def test_o_terminal_de_verdade_e_as_perguntas_no_stderr(self):
         args = cli.parser().parse_args(["init", "--home", str(self.home)])
         out, err = Terminal(), io.StringIO()
-        ambiente = {k: v for k, v in os.environ.items() if k != "CI"}
-        ambiente["TERM"] = "xterm"
+        ambiente = ambiente_de_terminal()
         with mock.patch.dict(os.environ, ambiente, clear=True), mock.patch.object(sys, "stdin", Terminal()), \
                 contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
             code = cli.cmd_init(args, RAIZ, ler=roteiro("claude", "github", "", "", "linux", "", ""))

@@ -15,7 +15,7 @@ from pathlib import Path
 from unittest import mock
 
 from base import RAIZ, Terminal, ambiente_de_terminal, escrever_config, roteiro
-from fluxo import assistente, cli, task
+from fluxo import assistente, cli, task, validate
 
 
 def no_pty(argv, entrada, env, prazo=15):
@@ -231,6 +231,106 @@ class Modules(unittest.TestCase):
         self.assertIn("[x] task", out)
         code, _, perguntas, ler, _ = self.modules("x", argv=["--enable", "lock"])
         self.assertEqual((code, perguntas, ler.restantes, self.ligados()), (0, "", ["x"], ["task", "watch", "lock"]))
+
+
+class Validate(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.home = Path(self.tmp.name).resolve()
+        self.cam = escrever_config(self.home, "claude", modules=["validate", "lock"])
+        (self.cam.dados / "pr-reviewer" / "bin").mkdir(parents=True)
+        (self.cam.dados / "pr-reviewer" / "bin" / "pr-review.ts").write_text("")
+        (self.cam.dados / "planos").mkdir(parents=True)
+        (self.cam.dados / "planos" / "T1.md").write_text("")
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def execucao(self, ch, quando):
+        pasta = self.cam.estado / "validar" / ch
+        pasta.mkdir(parents=True)
+        (pasta / "pedido.json").write_text("{}")
+        os.utime(pasta / "pedido.json", (quando, quando))
+
+    def validate(self, *respostas, argv=(), interativo=True):
+        """Devolve (código, os starts, o que foi perguntado, o leitor, os mocks de enable/status/stop, stderr)."""
+        args = cli.parser().parse_args(["validate", *argv, "--home", str(self.home)])
+        ler, perguntas, err, vistos = roteiro(*respostas), io.StringIO(), io.StringIO(), []
+        with mock.patch.object(validate, "start", lambda cfg, c, raiz, ch, argv, trava, **kw: vistos.append((ch, argv[2:]))), \
+                mock.patch.object(validate, "preparar_revisao", lambda cfg, c, id_, backend: (["node", "x", "--local", id_], [])), \
+                mock.patch.object(validate, "enable", return_value=(0, [])) as enable, \
+                mock.patch.object(validate, "status", return_value=(0, [])) as status, \
+                mock.patch.object(validate, "stop", return_value=(0, "")) as stop, \
+                contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+            code = cli.cmd_validate(args, RAIZ, ler=ler, saida=perguntas, interativo=interativo)
+        mocks = {"enable": enable, "status": status, "stop": stop}
+        return code, vistos, perguntas.getvalue(), ler, mocks, err.getvalue()
+
+    def test_sem_acao_sem_terminal_e_erro(self):
+        code, _, perguntas, ler, mocks, err = self.validate("enable", interativo=False)
+        self.assertEqual((code, perguntas, ler.restantes, mocks["enable"].called), (2, "", ["enable"], False))
+        self.assertIn("fluxo validate: falta a ação: enable, disable, start, status, stop ou exec (", err)
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err), contextlib.redirect_stdout(io.StringIO()):  # o argparse aceita
+            self.assertEqual(cli.main(["validate", "--home", str(self.home)], RAIZ), 2)
+        self.assertIn("falta a ação", err.getvalue())
+
+    def test_acao_pelo_menu(self):
+        code, _, perguntas, ler, mocks, _ = self.validate("enable")
+        self.assertEqual((code, ler.restantes, mocks["enable"].called), (0, [], True))
+        self.assertIn("Ação do validate:", perguntas)
+        self.assertNotIn(") exec", perguntas)
+        self.assertIn("o mesmo, sem menu: fluxo validate enable --home ", perguntas)
+
+    def test_start_de_uma_tarefa(self):
+        code, vistos, perguntas, ler, _, _ = self.validate("", "", "T2", "T1")  # o padrão: start, tarefa
+        self.assertEqual((code, vistos, ler.restantes), (0, [("revisao/T1", ["--local", "T1"])], []))
+        self.assertIn("a tarefa T2 não tem plano", perguntas)
+        self.assertIn("o mesmo, sem menu: fluxo validate start T1 --home ", perguntas)
+
+    def test_start_de_uma_receita(self):
+        code, vistos, perguntas, ler, _, _ = self.validate("receita", "api x", "api", "check", argv=["start"])
+        self.assertEqual((code, vistos, ler.restantes), (0, [("receita/api", ["recipe", "api", "--check", "--json"])], []))
+        self.assertIn("nome de repo inválido", perguntas)
+        self.assertTrue(perguntas.rstrip().endswith("--check"))
+        code, vistos, perguntas, _, _, _ = self.validate("api", argv=["start", "--fix"])  # o --fix já diz receita
+        self.assertEqual((code, vistos), (0, [("receita/api", ["recipe", "api", "--fix", "--json"])]))
+        self.assertNotIn("Validar o quê", perguntas)
+        self.assertNotIn("Modo da receita", perguntas)
+
+    def test_status_e_stop_escolhem_a_execucao(self):
+        self.execucao("receita/api", 1000)
+        self.execucao("revisao/T1", 2000)
+        code, _, perguntas, _, mocks, _ = self.validate("", argv=["status"])
+        self.assertEqual((code, mocks["status"].call_args[0][1]), (0, "revisao/T1"))  # a mais nova é o padrão
+        self.assertIn("1) revisao/T1", perguntas)
+        code, _, _, _, mocks, _ = self.validate("2", argv=["status"])
+        self.assertEqual(mocks["status"].call_args[0][1], "receita/api")
+        with mock.patch.object(validate, "_rodando", lambda pasta: pasta.name == "api"):
+            code, _, perguntas, _, mocks, _ = self.validate("", argv=["stop"])
+        self.assertEqual((code, mocks["stop"].call_args[0][1]), (0, "receita/api"))
+        self.assertNotIn("revisao/T1", perguntas.split("Qual execução:")[1])  # no stop, só as que rodam
+
+    def test_sem_execucao_nada_a_escolher(self):
+        for acao, msg in (("status", "nenhuma validação registrada"), ("stop", "nenhuma validação rodando")):
+            with self.subTest(acao=acao):
+                code, _, perguntas, ler, mocks, _ = self.validate("x", argv=[acao])
+                self.assertEqual((code, ler.restantes, mocks[acao].called), (1, ["x"], False))
+                self.assertIn(msg, perguntas)
+
+    def test_cancelar_e_com_alvo(self):
+        code, vistos, perguntas, _, mocks, _ = self.validate("start", KeyboardInterrupt)
+        self.assertEqual((code, vistos), (130, []))
+        self.assertIn("cancelado; nada foi feito", perguntas)
+        code, _, perguntas, ler, mocks, _ = self.validate("x", argv=["status", "T1"])
+        self.assertEqual((code, perguntas, ler.restantes, mocks["status"].call_args[0][1]), (0, "", ["x"], "revisao/T1"))
+
+    def test_execucoes_ignora_o_que_nao_e_execucao(self):
+        self.execucao("revisao/T1", 1000)
+        (self.cam.estado / "validar" / "revisao" / "sem-pedido").mkdir()
+        (self.cam.estado / "validar" / "outro" / "x").mkdir(parents=True)
+        (self.cam.estado / "validar" / "outro" / "x" / "pedido.json").write_text("{}")
+        self.assertEqual(validate.execucoes(self.cam), ["revisao/T1"])
 
 
 class TaskNoPty(unittest.TestCase):

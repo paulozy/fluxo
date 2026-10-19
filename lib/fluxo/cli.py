@@ -227,9 +227,43 @@ def cmd_watch(args, raiz):
     return code
 
 
-def cmd_validate(args, raiz):
+def _argv_validate(args):
+    argv = ["validate", args.acao, *([args.alvo] if args.alvo else [])]
+    for flag, valor in (("--recipe", args.recipe), ("--backend", args.backend), ("--home", args.home),
+                        ("--profile", args.profile if args.profile != "local" else None),
+                        ("--wait", str(args.wait) if args.wait else None)):
+        argv += [flag, valor] if valor else []
+    return argv + [flag for flag, ligada in (("--fix", args.fix), ("--check", args.check)) if ligada]
+
+
+def cmd_validate(args, raiz, ler=input, saida=None, interativo=None):
+    perguntas = None
+    if args.acao is None:
+        perguntas = _perguntas(args, ler, saida, interativo)
+        if not perguntas:
+            print(f"fluxo validate: falta a ação: enable, disable, start, status, stop ou exec ({_dica(args)})",
+                  file=sys.stderr)
+            return 2
+        try:
+            args.acao = assistente.menu_validate_acao(perguntas)
+        except (assistente.Cancelado, KeyboardInterrupt):
+            return _cancelado(perguntas, "nada foi feito")
     # o disable vale com o módulo desligado: é o que tira o clone depois de desligá-lo
     cam, cfg = _carregar(args, raiz, None if args.acao == "disable" else "validate")
+    if args.acao in ("start", "status", "stop") and not (args.alvo or args.recipe):
+        perguntas = perguntas or _perguntas(args, ler, saida, interativo)
+        if perguntas:  # sem terminal, segue para o erro de sempre
+            try:
+                alvo = assistente.menu_validate_alvo(perguntas, cam, args.acao,
+                                                     "fix" if args.fix else "check" if args.check else None)
+            except (assistente.Cancelado, KeyboardInterrupt):
+                return _cancelado(perguntas, "nada foi feito")
+            if alvo is None:
+                return 1
+            args.alvo, args.recipe, modo = alvo
+            args.fix, args.check = modo == "fix", modo == "check"
+    if perguntas:
+        _o_mesmo(perguntas, _argv_validate(args))
     if (args.fix or args.check) and not args.recipe:
         raise cfgmod.ErroConfig("--fix e --check são do --recipe")
     if args.fix and args.check:
@@ -558,7 +592,8 @@ def parser():
     p.set_defaults(fn=cmd_watch)
 
     p = sub.add_parser("validate", help="o pr-reviewer (módulo validate): enable clona, start revisa em segundo plano, status acompanha")
-    p.add_argument("acao", choices=("enable", "disable", "exec", "start", "status", "stop", "_rodar"))
+    p.add_argument("acao", nargs="?", choices=("enable", "disable", "exec", "start", "status", "stop", "_rodar"),
+                   help="sem ação, num terminal, pergunta")
     p.add_argument("alvo", nargs="?", metavar="ID", help="start/status/stop: a tarefa (ou --recipe <repo>)")
     p.add_argument("--profile", default="local", help="enable: o perfil da config do pr-reviewer que ele cria (padrão: local)")
     p.add_argument("--recipe", metavar="REPO", help="start/status/stop: o runbook do repo, em vez da revisão da tarefa")

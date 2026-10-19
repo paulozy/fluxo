@@ -18,7 +18,7 @@ import sys
 from pathlib import Path
 
 from . import config as cfgmod
-from . import montar, task
+from . import montar, task, validate
 
 
 class Cancelado(Exception):
@@ -219,6 +219,50 @@ def menu_task(p, prefixo, skills, prompt=None, nome=None):
         return id_ or None, prompt
     id_ = p.texto("ID da tarefa", None, valida_id(True))
     return id_, None if acao == "planejar" else f"{prefixo}{acao} {id_}"
+
+
+ACOES_VALIDATE = {"enable": "clona o pr-reviewer, ou leva o clone para a tag desta versão",
+                  "disable": "tira o clone",
+                  "start": "revisa uma tarefa, ou roda o runbook de um repo, em segundo plano",
+                  "status": "acompanha uma execução",
+                  "stop": "cancela uma execução"}
+MODOS_RECEITA = {"proposta": "um agente lê o código e propõe o runbook",
+                 "check": "sobe o stack com o runbook, sem agente",
+                 "fix": "refaz com o último --check que falhou"}
+
+
+def menu_validate_acao(p):
+    """A ação do `fluxo validate` sem ação. O exec fica de fora: precisa do `-- …`. Levanta Cancelado."""
+    return p.uma("Ação do validate:", list(ACOES_VALIDATE), "start", ACOES_VALIDATE)
+
+
+def menu_validate_alvo(p, cam, acao, modo=None):
+    """O alvo que falta ao start, ao status ou ao stop: (id, repo, modo). `modo` é o das flags (check ou fix), que
+    só a receita tem. No status e no stop, escolhe entre as execuções registradas (no stop, só as que rodam); sem
+    nenhuma, devolve None. Levanta Cancelado."""
+    if acao != "start":
+        chaves = validate.execucoes(cam, rodando=acao == "stop")
+        if not chaves:
+            p.escrever("nenhuma validação rodando" if acao == "stop" else
+                       "nenhuma validação registrada: fluxo validate start")
+            return None
+        tipo, _, nome = p.uma("Qual execução:", chaves, chaves[0]).partition("/")
+        return (nome, None, modo) if tipo == "revisao" else (None, nome, modo)
+    o_que = "receita" if modo else p.uma("Validar o quê:", ["tarefa", "receita"], "tarefa", {
+        "tarefa": "a revisão do pr-reviewer, com o plano da tarefa (o /validar)",
+        "receita": "o runbook de um repo (o /receita)"})
+    if o_que == "tarefa":
+        def valida_id(r):
+            if not task.ID_RE.fullmatch(r):
+                return "ID inválido: letras, números, ponto, hífen e sublinhado, até 40"
+            if not (cam.dados / "planos" / f"{r}.md").is_file():
+                return f"a tarefa {r} não tem plano: o /planejar grava o plano antes"
+            return None
+        return p.texto("ID da tarefa", None, valida_id), None, None
+    repo = p.texto("Repo (o nome da pasta, em code_dir)", None,
+                   lambda r: None if validate.RECEITA_RE.fullmatch(r) else "nome de repo inválido: letras, números, "
+                   "hífen e sublinhado")
+    return None, repo, modo or p.uma("Modo da receita:", list(MODOS_RECEITA), "proposta", MODOS_RECEITA)
 
 
 def notas_dos_modulos(cfg, modulos, raiz):

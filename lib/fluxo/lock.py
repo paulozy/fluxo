@@ -242,7 +242,7 @@ def pegar_esperando(trava, esperar, dormir=time.sleep, relogio=time.monotonic, *
 
 def rodar(trava, comando, esperar, popen=subprocess.Popen, erro=None, **kw):
     """Pega, roda e solta. Um SIGTERM/SIGHUP (o timeout da ferramenta) é repassado ao comando, e a trava
-    só é solta depois que ele termina: o `docker compose` precisa de tempo para derrubar o stack, e
+    só é solta depois que ele termina, também no Ctrl-C: o `docker compose` precisa de tempo para derrubar o stack, e
     soltar antes deixaria a próxima sessão subir com as portas ainda ocupadas."""
     erro = erro or sys.stderr
     ok, dono, nova = pegar_esperando(trava, esperar, **kw)
@@ -256,7 +256,11 @@ def rodar(trava, comando, esperar, popen=subprocess.Popen, erro=None, **kw):
         if proc is not None and proc.poll() is None:
             proc.send_signal(sinal)
 
+    def anotar(sinal, _frame):  # o Ctrl-C do terminal já chega ao comando, que é do mesmo grupo: só espera
+        recebido.append(sinal)
+
     antigos = {s: signal.signal(s, repassar) for s in (signal.SIGTERM, signal.SIGHUP)}
+    antigos[signal.SIGINT] = signal.signal(signal.SIGINT, anotar)
     try:
         proc = popen(comando)
         codigo = proc.wait()  # o wait é retomado depois do handler

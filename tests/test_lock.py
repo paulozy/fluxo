@@ -174,6 +174,33 @@ class Trava(unittest.TestCase):
                 self.assertEqual(signal.getsignal(sinal), signal.SIG_DFL)  # o handler antigo voltou
                 filho[0].stdout.close()
 
+    def test_ctrl_c_espera_o_comando_sem_repassar(self):
+        """No terminal, o Ctrl-C chega ao fluxo e ao comando, que é do mesmo grupo: o fluxo não repassa (o comando
+        receberia dois) e só solta a trava depois que ele termina a limpeza."""
+        pronto, contagem = self.estado / "limpou-int", self.estado / "ints"
+        script = (f"import signal, sys, time\n"
+                  f"def fim(s, f):\n    open({str(contagem)!r}, 'a').write('x')\n    time.sleep(0.3)\n"
+                  f"    open({str(pronto)!r}, 'w').close()\n    sys.exit(0)\n"
+                  f"signal.signal(signal.SIGINT, fim)\nprint('ok', flush=True)\ntime.sleep(10)\n")
+        filho = []
+
+        def popen(cmd):
+            p = subprocess.Popen(cmd, stdout=subprocess.PIPE, text=True)
+            p.stdout.readline()
+            filho.append(p)
+            # o terminal manda o SIGINT ao grupo inteiro: ao fluxo e ao comando
+            threading.Timer(0.1, os.kill, (os.getpid(), signal.SIGINT)).start()
+            threading.Timer(0.1, os.kill, (p.pid, signal.SIGINT)).start()
+            return p
+
+        codigo = lock.rodar(self.t, ["python3", "-c", script], 0, popen=popen, sessao="s1", pid=500)
+        self.assertEqual(codigo, 128 + signal.SIGINT)
+        self.assertTrue(pronto.exists())
+        self.assertEqual(contagem.read_text(), "x")  # um só Ctrl-C chegou ao comando
+        self.assertIsNone(self.t.ler())
+        self.assertIs(signal.getsignal(signal.SIGINT), signal.default_int_handler)
+        filho[0].stdout.close()
+
     def test_pegar_esperando(self):
         self.t.pegar("s1", pid=500)
         voltas = iter(range(10))

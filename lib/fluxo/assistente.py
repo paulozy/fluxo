@@ -228,7 +228,9 @@ ACOES_VALIDATE = {"enable": "clona o pr-reviewer, ou leva o clone para a tag des
                   "disable": "tira o clone",
                   "start": "revisa uma tarefa, ou roda o runbook de um repo, em segundo plano",
                   "status": "acompanha uma execução",
-                  "stop": "cancela uma execução"}
+                  "stop": "cancela uma execução",
+                  "recipe": "o runbook de um repo, neste terminal: propõe, mostra e pergunta antes de gravar",
+                  "doctor": "o doctor do pr-reviewer: o binário, o login e a sonda de contenção"}
 MODOS_RECEITA = {"proposta": "um agente lê o código e propõe o runbook",
                  "check": "sobe o stack com o runbook, sem agente",
                  "fix": "refaz com o último --check que falhou"}
@@ -262,10 +264,16 @@ def menu_validate_alvo(p, cam, acao, modo=None):
                 return f"a tarefa {r} não tem plano: o /planejar grava o plano antes"
             return None
         return p.texto("ID da tarefa", None, valida_id), None, None
+    repo, modo = menu_receita(p, modo)
+    return None, repo, modo
+
+
+def menu_receita(p, modo=None):
+    """(repo, modo) da receita; o modo só é perguntado se as flags não deram. Levanta Cancelado."""
     repo = p.texto("Repo (o nome da pasta, em code_dir)", None,
                    lambda r: None if validate.RECEITA_RE.fullmatch(r) else "nome de repo inválido: letras, números, "
                    "hífen e sublinhado")
-    return None, repo, modo or p.uma("Modo da receita:", list(MODOS_RECEITA), "proposta", MODOS_RECEITA)
+    return repo, modo or p.uma("Modo da receita:", list(MODOS_RECEITA), "proposta", MODOS_RECEITA)
 
 
 def notas_dos_modulos(cfg, modulos, raiz):

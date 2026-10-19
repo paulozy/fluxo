@@ -244,13 +244,34 @@ def _argv_validate(args):
     return argv + [flag for flag, ligada in (("--fix", args.fix), ("--check", args.check)) if ligada]
 
 
+def _validate_aqui(args, cfg, cam, modo, perguntas):
+    """O recipe e o doctor do pr-reviewer neste terminal. Sem terminal (num agente), o recipe vai com --json: não
+    pergunta, não grava e devolve o comando do --apply."""
+    if args.acao == "doctor":
+        print("o doctor do pr-reviewer faz uma chamada de verdade ao agente (a sonda de contenção)", file=sys.stderr)
+        return validate.em_primeiro_plano(cam, validate.comando(cfg, cam, ["doctor", *validate._backend(args.backend)]))
+    repo = args.alvo or args.recipe
+    if not repo:
+        if not perguntas:
+            raise cfgmod.ErroConfig("fluxo validate recipe <repo> [--check | --fix]")
+        try:
+            repo, modo = assistente.menu_receita(perguntas, modo)
+        except (assistente.Cancelado, KeyboardInterrupt):
+            return _cancelado(perguntas, "nada foi feito")
+        args.alvo, args.recipe, args.fix, args.check = repo, None, modo == "fix", modo == "check"
+        _o_mesmo(perguntas, _argv_validate(args))
+    argv = validate.preparar_receita(cfg, cam, repo, modo or "proposta", args.backend, json_=not perguntas)
+    trava = modo == "check" and "lock" in cfg["modules"]  # só o --check sobe o stack
+    return validate.em_primeiro_plano(cam, argv, f"receita/{repo}", trava, args.wait)
+
+
 def cmd_validate(args, raiz, ler=input, saida=None, interativo=None):
     perguntas = None
     if args.acao is None:
         perguntas = _perguntas(args, ler, saida, interativo)
         if not perguntas:
-            print(f"fluxo validate: falta a ação: enable, disable, start, status, stop ou exec ({_dica(args)})",
-                  file=sys.stderr)
+            print("fluxo validate: falta a ação: enable, disable, start, status, stop, recipe, doctor ou exec "
+                  f"({_dica(args)})", file=sys.stderr)
             return 2
         try:
             args.acao = assistente.menu_validate_acao(perguntas)
@@ -263,6 +284,8 @@ def cmd_validate(args, raiz, ler=input, saida=None, interativo=None):
     if args.recipe and args.alvo:
         raise cfgmod.ErroConfig("é a tarefa ou o --recipe <repo>, não os dois")
     modo = "fix" if args.fix else "check" if args.check else None
+    if args.acao in ("recipe", "doctor"):
+        return _validate_aqui(args, cfg, cam, modo, perguntas or _perguntas(args, ler, saida, interativo))
     # o menu do alvo só onde ele resolve: no start, o --fix/--check já diz receita; no status e no stop, não cabe
     if args.acao in ("start", "status", "stop") and not (args.alvo or args.recipe) and (args.acao == "start" or not modo):
         perguntas = perguntas or _perguntas(args, ler, saida, interativo)
@@ -599,15 +622,16 @@ def parser():
     p.set_defaults(fn=cmd_watch)
 
     p = sub.add_parser("validate", help="o pr-reviewer (módulo validate): enable clona, start revisa em segundo plano, status acompanha")
-    p.add_argument("acao", nargs="?", choices=("enable", "disable", "exec", "start", "status", "stop", "_rodar"),
+    p.add_argument("acao", nargs="?", choices=("enable", "disable", "exec", "start", "status", "stop", "recipe", "doctor",
+                                                "_rodar"),
                    help="sem ação, num terminal, pergunta")
-    p.add_argument("alvo", nargs="?", metavar="ID", help="start/status/stop: a tarefa (ou --recipe <repo>)")
+    p.add_argument("alvo", nargs="?", metavar="ID", help="start/status/stop: a tarefa (ou --recipe <repo>); recipe: o repo")
     p.add_argument("--profile", default="local", help="enable: o perfil da config do pr-reviewer que ele cria (padrão: local)")
     p.add_argument("--recipe", metavar="REPO", help="start/status/stop: o runbook do repo, em vez da revisão da tarefa")
-    p.add_argument("--fix", action="store_true", help="start --recipe: refaz com o último --check que falhou")
-    p.add_argument("--check", action="store_true", help="start --recipe: sobe o stack com o runbook do perfil")
-    p.add_argument("--backend", choices=cfgmod.TOOLS, help="start: a ferramenta dos agentes do pr-review (no copilot, vale o backend da config do pr-reviewer)")
-    p.add_argument("--wait", type=int, default=0, help="status: segundos esperando terminar (até 540)")
+    p.add_argument("--fix", action="store_true", help="recipe, start --recipe: refaz com o último --check que falhou")
+    p.add_argument("--check", action="store_true", help="recipe, start --recipe: sobe o stack com o runbook do perfil")
+    p.add_argument("--backend", choices=cfgmod.TOOLS, help="start, recipe, doctor: a ferramenta dos agentes do pr-review (padrão: o backend da config do pr-reviewer)")
+    p.add_argument("--wait", type=int, default=0, help="status: segundos esperando terminar (até 540); recipe --check: esperando a trava do stack")
     p.set_defaults(fn=cmd_validate)
 
     p = sub.add_parser("hook", help="(chamado pelas ferramentas) grava um evento para o painel")

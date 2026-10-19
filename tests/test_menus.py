@@ -306,15 +306,16 @@ class Validate(unittest.TestCase):
                 mock.patch.object(validate, "enable", return_value=(0, [])) as enable, \
                 mock.patch.object(validate, "status", return_value=(0, [])) as status, \
                 mock.patch.object(validate, "stop", return_value=(0, "")) as stop, \
+                mock.patch.object(validate, "em_primeiro_plano", return_value=0) as aqui, \
                 contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
             code = cli.cmd_validate(args, RAIZ, ler=ler, saida=perguntas, interativo=interativo)
-        mocks = {"enable": enable, "status": status, "stop": stop}
+        mocks = {"enable": enable, "status": status, "stop": stop, "aqui": aqui}
         return code, vistos, perguntas.getvalue(), ler, mocks, err.getvalue()
 
     def test_sem_acao_sem_terminal_e_erro(self):
         code, _, perguntas, ler, mocks, err = self.validate("enable", interativo=False)
         self.assertEqual((code, perguntas, ler.restantes, mocks["enable"].called), (2, "", ["enable"], False))
-        self.assertIn("fluxo validate: falta a ação: enable, disable, start, status, stop ou exec (", err)
+        self.assertIn("fluxo validate: falta a ação: enable, disable, start, status, stop, recipe, doctor ou exec (", err)
         err = io.StringIO()
         with contextlib.redirect_stderr(err), contextlib.redirect_stdout(io.StringIO()):  # o argparse aceita
             self.assertEqual(cli.main(["validate", "--home", str(self.home)], RAIZ), 2)
@@ -377,6 +378,41 @@ class Validate(unittest.TestCase):
         for argv, erro in ((["start", "--fix", "--check"], "não combinam"), (["status", "--fix"], "são do --recipe")):
             with self.subTest(argv=argv), self.assertRaisesRegex(config.ErroConfig, erro):
                 self.validate("api", "x", argv=argv)
+
+    def aqui(self, mocks):
+        """(o argv do pr-review sem o node e o script, ch, trava) da chamada em primeiro plano."""
+        _, argv, *resto = mocks["aqui"].call_args[0]
+        return (argv[2:], *resto)
+
+    def test_recipe_no_terminal_pergunta_o_sim_e_num_agente_nao(self):
+        code, _, _, _, mocks, _ = self.validate(argv=["recipe", "api", "--backend", "copilot"])
+        self.assertEqual((code, self.aqui(mocks)), (0, (["recipe", "api", "--backend", "copilot"], "receita/api", False, 0)))
+        code, _, _, _, mocks, _ = self.validate(argv=["recipe", "api"], interativo=False)
+        self.assertEqual(self.aqui(mocks)[0], ["recipe", "api", "--json"])  # sem terminal: não pergunta nem grava
+
+    def test_recipe_check_segura_a_trava_so_com_o_lock(self):
+        code, _, _, _, mocks, _ = self.validate(argv=["recipe", "api", "--check", "--backend", "copilot", "--wait", "30"])
+        self.assertEqual(self.aqui(mocks), (["recipe", "api", "--check"], "receita/api", True, 30))  # o --check não leva backend
+        escrever_config(self.home, "claude", modules=["validate"])
+        _, _, _, _, mocks, _ = self.validate(argv=["recipe", "api", "--check"])
+        self.assertEqual(self.aqui(mocks)[2], False)
+        _, _, _, _, mocks, _ = self.validate(argv=["recipe", "api", "--fix"])
+        self.assertEqual(self.aqui(mocks)[:3], (["recipe", "api", "--fix"], "receita/api", False))
+
+    def test_recipe_sem_repo(self):
+        code, _, perguntas, ler, mocks, _ = self.validate("api x", "api", "check", argv=["recipe"])
+        self.assertEqual((code, self.aqui(mocks)[0], ler.restantes), (0, ["recipe", "api", "--check"], []))
+        self.assertIn("o mesmo, sem menu: fluxo validate recipe api --home ", perguntas)
+        self.assertTrue(perguntas.rstrip().endswith("--check"))
+        code, _, perguntas, _, mocks, _ = self.validate("recipe", "api", "")  # pelo menu da ação
+        self.assertEqual(self.aqui(mocks)[0], ["recipe", "api"])
+        with self.assertRaisesRegex(config.ErroConfig, r"fluxo validate recipe <repo>"):
+            self.validate("api", argv=["recipe"], interativo=False)
+
+    def test_doctor(self):
+        code, _, _, _, mocks, err = self.validate(argv=["doctor", "--backend", "copilot"])
+        self.assertEqual((code, self.aqui(mocks)), (0, (["doctor", "--backend", "copilot"],)))
+        self.assertIn("chamada de verdade ao agente", err)
 
     def test_execucoes_ignora_o_que_nao_e_execucao(self):
         self.execucao("revisao/T1", 1000)

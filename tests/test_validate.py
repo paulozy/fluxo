@@ -651,6 +651,30 @@ class Linha(unittest.TestCase):
         code, _, cam = self.cli("disable", modules=(), clone=False)
         self.assertEqual(code, 0)
 
+    def test_em_primeiro_plano(self):
+        class Proc:
+            def __init__(self, codigo, ctrl_c=False):
+                self.codigo, self.ctrl_c = codigo, ctrl_c
+
+            def wait(self):
+                if self.ctrl_c:  # o Ctrl-C chega enquanto o pr-review roda: o fluxo só anota e espera
+                    signal.getsignal(signal.SIGINT)(signal.SIGINT, None)
+                return self.codigo
+
+        tmp = Path(tempfile.mkdtemp(prefix="fluxo-validate-"))
+        self.addCleanup(shutil.rmtree, tmp, True)
+        self.cam = cfgmod.Caminhos(home=tmp)
+        vistos = []
+        popen = lambda argv: vistos.append(argv) or Proc(5)
+        self.assertEqual(validate.em_primeiro_plano(self.cam, ["node", "x"], popen=popen), 5)
+        self.assertEqual(vistos, [["node", "x"]])
+        self.assertEqual(validate.em_primeiro_plano(self.cam, ["x"], popen=lambda a: Proc(0, ctrl_c=True)), 130)
+        self.assertIs(signal.getsignal(signal.SIGINT), signal.default_int_handler)
+        with mock.patch.object(validate.lock, "rodar", return_value=6) as rodar:
+            self.assertEqual(validate.em_primeiro_plano(self.cam, ["x"], "receita/api", True, 30, popen=popen), 6)
+        self.assertEqual(rodar.call_args[0][1:3], (["x"], 30))
+        self.assertEqual(rodar.call_args[1]["sessao"], "validar-receita-api")
+
     def test_init_mantem_a_chave_validate(self):
         tmp = Path(tempfile.mkdtemp(prefix="fluxo-validate-"))
         self.addCleanup(shutil.rmtree, tmp, True)

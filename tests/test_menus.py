@@ -15,18 +15,23 @@ from pathlib import Path
 from unittest import mock
 
 from base import RAIZ, Terminal, ambiente_de_terminal, escrever_config, roteiro
-from fluxo import assistente, cli, task, validate
+from fluxo import assistente, cli, config, task, validate
 
 
 def no_pty(argv, entrada, env, prazo=15):
     """Roda `argv` com stdin, stdout e stderr num pseudoterminal, com `entrada` já digitada. Devolve (código, o que
     apareceu na tela); passado o prazo, mata o processo (um menu esperando resposta não trava a suíte)."""
     mestre, escravo = os.openpty()
-    proc = subprocess.Popen(argv, stdin=escravo, stdout=escravo, stderr=escravo, env=env, start_new_session=True)
-    os.close(escravo)
-    os.write(mestre, entrada.encode())
+    try:
+        proc = subprocess.Popen(argv, stdin=escravo, stdout=escravo, stderr=escravo, env=env, start_new_session=True)
+    except OSError:
+        os.close(mestre)
+        raise
+    finally:
+        os.close(escravo)
     tela, fim = b"", time.monotonic() + prazo
     try:
+        os.write(mestre, entrada.encode())
         while time.monotonic() < fim:
             if select.select([mestre], [], [], 0.2)[0]:
                 try:
@@ -39,9 +44,12 @@ def no_pty(argv, entrada, env, prazo=15):
             elif proc.poll() is not None:
                 break
         else:
-            proc.kill()
+            proc.kill()  # passou do prazo: o -9 no código diz que travou
         return proc.wait(timeout=5), tela.decode("utf-8", "replace")
     finally:
+        if proc.poll() is None:  # saiu por exceção
+            proc.kill()
+            proc.wait()
         os.close(mestre)
 
 
@@ -131,6 +139,31 @@ class Task(unittest.TestCase):
         code, chegou, _, _, _ = self.task("PROJ-1", argv=["-p", "/concluir com cuidado"])
         self.assertEqual(chegou, ("PROJ-1", "/concluir com cuidado", None))  # como `fluxo task PROJ-1 -p …`
 
+    def test_id_do_prompt_e_o_padrao(self):
+        code, chegou, perguntas, _, _ = self.task("", argv=["-p", "/implementar PROJ-1"])
+        self.assertEqual((code, chegou[:2]), (0, ("PROJ-1", "/implementar PROJ-1")))
+        self.assertIn("[PROJ-1]", perguntas)
+
+    def test_p_de_tarefa_com_nome_e_o_erro_de_sempre(self):
+        code, chegou, perguntas, ler, err = self.task("PROJ-1", argv=["-p", "/implementar", "-n", "minha"],
+                                                      abrir=task.abrir)
+        self.assertEqual((code, perguntas, ler.restantes), (2, "", ["PROJ-1"]))
+        self.assertIn("são de uma tarefa", err)
+
+    def test_nome_invalido_nao_espera_o_prompt(self):
+        for nome in ("Ruim X", "watch"):
+            with self.subTest(nome=nome):
+                code, chegou, perguntas, ler, err = self.task("oi", argv=["-n", nome])
+                self.assertEqual((code, chegou, ler.restantes), (2, None, ["oi"]))
+                self.assertIn("inválido", err)
+
+    def test_comando_equivalente_com_prompt_de_traco_e_target(self):
+        _, _, perguntas, _, _ = self.task("livre", "-x tudo", "", argv=["--target", "main:"])
+        self.assertIn("fluxo task '--prompt=-x tudo' --dir ", perguntas)
+        self.assertIn("--target main:", perguntas)
+        args = cli.parser().parse_args(["task", "--prompt=-x tudo"])
+        self.assertEqual(args.prompt, "-x tudo")
+
     def test_com_nome_pede_so_o_prompt(self):
         code, chegou, perguntas, ler, _ = self.task("/implementar x", "olha o log", argv=["-n", "minha"])
         self.assertEqual((code, chegou, ler.restantes), (0, (None, "olha o log", "minha"), []))
@@ -201,6 +234,18 @@ class Modules(unittest.TestCase):
         code, _, perguntas, _, _ = self.modules("2", argv=["--disable"])
         self.assertEqual((code, self.ligados()), (0, ["task"]))
         self.assertIn("Módulos para desligar:", perguntas)
+
+    def test_desligar_nao_recusa_o_que_nao_serve(self):
+        escrever_config(self.home, "claude", modules=["panel", "task"])  # um panel de quando havia o copilot
+        code, _, perguntas, _, _ = self.modules("panel", argv=["--disable"])
+        self.assertEqual((code, self.ligados()), (0, ["task"]))
+        self.assertIn("não serve", perguntas)
+
+    def test_modulo_que_nao_existe_mais(self):
+        escrever_config(self.home, "claude", modules=["task", "velho"])
+        code, _, perguntas, _, _ = self.modules("velho", argv=["--disable"])
+        self.assertEqual((code, self.ligados()), (0, ["task"]))
+        self.assertIn("velho  não existe mais", perguntas)
 
     def test_nenhum_nao_grava(self):
         antes = self.cam.config.read_bytes()
@@ -325,8 +370,17 @@ class Validate(unittest.TestCase):
         code, _, perguntas, ler, mocks, _ = self.validate("x", argv=["status", "T1"])
         self.assertEqual((code, perguntas, ler.restantes, mocks["status"].call_args[0][1]), (0, "", ["x"], "revisao/T1"))
 
+    def test_flags_que_nao_cabem_nao_abrem_o_menu(self):
+        code, _, perguntas, ler, mocks, _ = self.validate("x", argv=["status", "--recipe", "api"])
+        self.assertEqual((code, perguntas, ler.restantes), (0, "", ["x"]))
+        self.assertEqual(mocks["status"].call_args[0][1], "receita/api")
+        for argv, erro in ((["start", "--fix", "--check"], "não combinam"), (["status", "--fix"], "são do --recipe")):
+            with self.subTest(argv=argv), self.assertRaisesRegex(config.ErroConfig, erro):
+                self.validate("api", "x", argv=argv)
+
     def test_execucoes_ignora_o_que_nao_e_execucao(self):
         self.execucao("revisao/T1", 1000)
+        self.execucao("revisao/.oculta", 2000)
         (self.cam.estado / "validar" / "revisao" / "sem-pedido").mkdir()
         (self.cam.estado / "validar" / "outro" / "x").mkdir(parents=True)
         (self.cam.estado / "validar" / "outro" / "x" / "pedido.json").write_text("{}")
@@ -338,7 +392,8 @@ class TaskNoPty(unittest.TestCase):
 
     def setUp(self):
         try:
-            os.close(os.openpty()[0])
+            for fd in os.openpty():
+                os.close(fd)
         except OSError:
             self.skipTest("sem pseudoterminal")
         self.tmp = tempfile.TemporaryDirectory()

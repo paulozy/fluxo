@@ -79,6 +79,14 @@ def barra_no_lugar_do_prefixo(prompt, prefixo, skills):
         raise ErroUso(f"nesta ferramenta a skill é chamada com {prefixo}: -p '{prefixo}{m.group(1)} …'")
 
 
+def validar_nome(nome):
+    """O nome da avulsa (-n), normalizado; levanta ErroUso."""
+    nome = nome.strip().lower()
+    if not NOME_RE.fullmatch(nome) or nome in RESERVADOS:
+        raise ErroUso(f"nome {nome!r} inválido: minúsculas, números e hífen, de 2 a 30 ({', '.join(RESERVADOS)} são do fluxo)")
+    return nome
+
+
 def resolver(id_, prompt, nome, prefixo="/", skills=None):
     """Valida e devolve (kind, nome, prompt, sufixar). Levanta ErroUso. `prefixo` é o da chamada de
     skill na ferramenta (o `prefixo` do adaptador); `skills`, os nomes delas."""
@@ -95,10 +103,7 @@ def resolver(id_, prompt, nome, prefixo="/", skills=None):
         raise ErroUso(f"{prefixo}planejar, {prefixo}implementar e {prefixo}concluir são de uma tarefa: "
                       "fluxo task <ID> -p '…'")
     if nome:
-        nome = nome.strip().lower()
-        if not NOME_RE.fullmatch(nome) or nome in RESERVADOS:
-            raise ErroUso(f"nome {nome!r} inválido: minúsculas, números e hífen, de 2 a 30 ({', '.join(RESERVADOS)} são do fluxo)")
-        return "avulsa", nome, prompt, False
+        return "avulsa", validar_nome(nome), prompt, False
     do_comando = nome_do_prompt(prompt, prefixo, skills if prefixo != "/" else None)
     return ("avulsa", do_comando, prompt, False) if do_comando else ("avulsa", "avulsa", prompt, True)
 

@@ -8,7 +8,7 @@
   pergunta no estilo do `init`: o número ou o nome, com o Enter aceitando o padrão. No fim, mostra o comando que
   faz o mesmo sem o menu.
   - `fluxo task` sem ID pergunta a ação (planejar, implementar, concluir ou um prompt livre) e o ID; com `-n`, só o
-    prompt; com um `-p` de tarefa sem ID, só o ID.
+    prompt; com um `-p` de tarefa sem ID, só o ID (o que o prompt já trouxer é o padrão).
   - `fluxo modules --enable` ou `--disable` sem nome mostra os desligados, ou os ligados, para escolher. O `fluxo
     modules` sozinho continua listando.
   - `fluxo validate` sem ação pergunta a ação. O `start` sem alvo pergunta a tarefa (com plano) ou o repo e o modo

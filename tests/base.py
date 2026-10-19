@@ -18,6 +18,10 @@ os.environ.pop("TMUX", None)
 os.environ.pop("TMUX_PANE", None)
 os.environ["TMUX_TMPDIR"] = os.path.realpath(tempfile.mkdtemp(prefix="fxt", dir="/tmp"))
 atexit.register(shutil.rmtree, os.environ["TMUX_TMPDIR"], True)
+# Nem com o terminal do usuário: um mock.patch("sys.stdout") tem isatty() verdadeiro, e o stdin ainda é o terminal
+# dele, então um comando sem argumento abriria o menu e esperaria resposta. O teste que quer o menu monta o
+# ambiente com ambiente_de_terminal(), que tira o CI.
+os.environ["CI"] = "1"
 
 from fluxo import assistente  # noqa: E402
 from fluxo import config as cfgmod  # noqa: E402

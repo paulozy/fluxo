@@ -444,7 +444,8 @@ fluxo task                                 # num terminal: pergunta a ação e o
 - **sem nada:** a ação (planejar, implementar, concluir ou um prompt livre) e o ID, que só o prompt livre
   dispensa;
 - **com `-n`:** só o prompt;
-- **com um `-p` de tarefa** (`-p /implementar`): só o ID. Se o prompt é só a skill, ele ganha o ID.
+- **com um `-p` de tarefa** (`-p /implementar`): só o ID. Se o prompt é só a skill, ele ganha o ID; se já traz
+  um ID, esse é o padrão.
 
 No fim, ele mostra o comando que faz o mesmo sem o menu. Sem terminal, ou dentro de um agente, falta de ID é erro
 de uso, como sempre.

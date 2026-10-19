@@ -18,8 +18,8 @@ instalado no nível do usuário e nunca escreve no repo da empresa.
 ```
 fluxo                 # entrada: põe lib/ no sys.path
 lib/fluxo/            # config, fonte (frontmatter), render (template), montar (função pura: fontes →
-                      # arquivos), instalar (manifesto), doctor, varredura, empacotar, assistente (o init
-                      # interativo), cli
+                      # arquivos), instalar (manifesto), doctor, varredura, empacotar, assistente (as
+                      # perguntas: o init interativo e os menus do task, modules e validate), cli
 lib/fluxo/ferramentas # claude.py, copilot.py, kiro.py, codex.py: onde cada coisa mora e em que formato
 nucleo/               # fontes: instrucoes/NN-*.md, agentes/*.md, skills/<n>/SKILL.md
 adaptadores/          # dados: tools e modelos por ferramenta; variáveis por forge

@@ -161,6 +161,16 @@ Os hooks e o `curses` da sua máquina decidem o que as abas mostram. O que a doc
 | V6 | Copilot: o `/validar` | o pr-review roda com `--backend copilot`, e o `doctor --backend=copilot` dele passa | "não leu o login do keychain": destrave o keyring ou rode `copilot login`; "o modelo não chamou nenhuma ferramenta": troque o modelo do `backends.copilot` |
 | V7 | `/receita <repo>` num repo sem runbook | mostra o resumo e o diff, pergunta, e só grava com o ok, pelo `--apply … --confirm=` | grava sem perguntar: pare e avise |
 
+## Menus interativos (v0.11.0)
+
+O menu só abre com stdin e stdout em terminal e sem marca de agente. Pelas fontes, o Copilot e o Codex não dão
+terminal aos comandos (e o Codex com `tty:true` vem com `TERM=dumb`), mas o Kiro tem código fechado.
+
+| # | Teste | Esperado | Se falhar |
+|---|---|---|---|
+| M1 | Kiro: peça "rode `fluxo task --dry-run` e me mostre a saída" | o erro "informe o ID da tarefa", na hora | a sessão trava esperando: o shell do Kiro dá terminal e não põe `AGENT_CONTEXT_OUT` nem `AGENT_DISPLAY_OUT`; avise, com a saída de `env` e de `python3 -c "import sys; print(sys.stdin.isatty(), sys.stdout.isatty())"` rodados pela sessão |
+| M2 | Num terminal seu: `fluxo task`, `fluxo validate` e `fluxo modules --enable` | o menu de cada um, e Ctrl-C sai com 130 sem abrir nem gravar nada | o erro de sempre: confira se o shell tem alguma das marcas de agente (`env`) |
+
 ## Depois
 
 Registre o resultado de cada linha no CHANGELOG, na versão que fechar a validação. O que divergiu

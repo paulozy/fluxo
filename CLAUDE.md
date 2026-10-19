@@ -20,7 +20,9 @@ fluxo                 # entrada: põe lib/ no sys.path
 lib/fluxo/            # config, fonte (frontmatter), render (template), montar (função pura: fontes →
                       # arquivos), instalar (manifesto), doctor, varredura, empacotar, assistente (as
                       # perguntas: o init interativo e os menus), ajustes (as chaves do `fluxo config`),
-                      # completar (o Tab: `fluxo __complete`), cli (o parser, a ajuda agrupada e o status)
+                      # completar (o Tab: `fluxo __complete`), cli (o parser, a ajuda agrupada e o status),
+                      # vistas (as abas do panel, puras), uso (a statusline, o modelo e a cota do Copilot), demo
+                      # (os dados de mentira do `panel --demo`)
 lib/fluxo/ferramentas # claude.py, copilot.py, kiro.py, codex.py: onde cada coisa mora e em que formato
 nucleo/               # fontes: instrucoes/NN-*.md, agentes/*.md, skills/<n>/SKILL.md
 adaptadores/          # dados: tools e modelos por ferramenta; variáveis por forge
@@ -51,6 +53,8 @@ tests/esperado/       # golden: a árvore gerada em cada cenário (inclui Librar
   porque a variável `TMUX` vale mais que o `TMUX_TMPDIR`.
 - **O hook (`fluxo hook`) nunca imprime e sempre sai com 0:** no Kiro o stdout entra no contexto, e no
   Copilot um `preToolUse` que falha nega a ferramenta (por isso ele não é usado).
+- **A statusline (`fluxo statusline`) também nunca imprime nem falha,** e o script `fluxo` a atende sem importar o
+  cli: o Copilot a roda a cada evento. O `uso.py` só importa a stdlib e o `config`.
 - **Texto de terceiro** (título de PR, comentário, prompt) nunca entra em script nem em shell: vai por
   argv, variável de ambiente, stdin ou arquivo.
 - **Não instale para `claude` no `~/.claude` desta máquina:** os agentes de lá têm o mesmo nome. O

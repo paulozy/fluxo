@@ -1,5 +1,41 @@
 # Changelog
 
+## [0.13.0] — 2026-10-19
+
+### Adicionado
+
+- **O gasto do Copilot no `fluxo panel`:** em cada sessão, o modelo e o effort, o contexto em barra, os tokens
+  (entrada, saída e cache) e o gasto em créditos (ou premium requests, no billing antigo). Na faixa de cima, a cota
+  do mês.
+  - O gasto e o contexto ao vivo vêm da statusline do Copilot. O hook não traz uso, e o `assistant.usage` não vai
+    para o disco.
+  - O modelo e o effort vêm do `events.jsonl` da sessão, e aparecem mesmo sem a statusline.
+  - A cota vem do cache local do Copilot (`copilot-user-cache.json`), pela entrada da conta logada nele. O cache
+    guarda outras contas, e a mais recente pode ser uma sem cota.
+- **`fluxo panel enable` no Copilot:** grava a statusline do fluxo no `~/.copilot/settings.json`, depois do "sim"
+  no terminal e com backup. O `copilot config` recusa essa chave.
+  - Se já existe uma statusline sua, ele avisa e não mexe nela.
+  - O `disable` tira só a do fluxo.
+  - O `doctor` e o `install` avisam quando ela falta ou sobra.
+- **`fluxo panel --demo`:** as 4 abas com dados de mentira, sem ler nem gravar nada, para conferir o visual.
+
+### Mudado
+
+- **O visual do painel:** as abas viram caixas com borda e título, com uma faixa em cima (sessões, quem espera você
+  e a cota) e as abas em destaque.
+  - **Estados:** cada um tem ícone, e o de trabalhando gira.
+  - **Cores:** o modelo tem a cor da família, e as cores vêm em 3 níveis:
+    - 256 tons médios, que leem no tema claro e no escuro;
+    - 8 cores;
+    - sem cor, só negrito e reverso.
+  - **Tela baixa:** o log cede primeiro, depois as ferramentas e por fim os subagentes. O rodapé cabe em 80 colunas.
+- **A data de renovação da cota é a de UTC,** a mesma que o GitHub mostra.
+
+### Corrigido
+
+- **Bordas e ícones no locale `C`:** o modo UTF-8 do Python (PEP 540) fazia o painel escolher os glifos UTF-8, que o
+  ncurses não desenhava. Agora o codeset vem do `nl_langinfo`, e no ASCII os acentos viram a letra simples.
+
 ## [0.12.2] — 2026-10-19
 
 ### Mudado

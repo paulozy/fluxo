@@ -172,6 +172,24 @@ terminal aos comandos (e o Codex com `tty:true` vem com `TERM=dumb`), mas o Kiro
 | M1 | Kiro: peça "rode `fluxo task --dry-run` e me mostre a saída" | o erro "informe o ID da tarefa", na hora | a sessão trava esperando: o shell do Kiro dá terminal e não põe `AGENT_CONTEXT_OUT` nem `AGENT_DISPLAY_OUT`; avise, com a saída de `env` e de `python3 -c "import sys; print(sys.stdin.isatty(), sys.stdout.isatty())"` rodados pela sessão |
 | M2 | Num terminal seu: `fluxo task`, `fluxo validate` e `fluxo modules --enable` | o menu de cada um, e Ctrl-C sai com 130 sem abrir nem gravar nada | o erro de sempre: confira se o shell tem alguma das marcas de agente (`env`) |
 
+## Painel com o gasto do Copilot (v0.13.0)
+
+A statusline e o cache da cota não têm doc oficial: os campos foram lidos no bundle do Copilot CLI 1.0.98
+(`cli-main.js`). No Mac:
+
+| # | Teste | Esperado | Se falhar |
+|---|---|---|---|
+| U1 | `fluxo panel --demo` no Terminal.app e no iTerm2, no tema claro e no escuro | caixas com borda, faixa azul em cima, estados e modelos coloridos, nada desalinhado | tudo cinza: `tput colors` (256?) e o `TERM`; bordas tortas: a opção de caracteres ambíguos em largura dupla está ligada |
+| U2 | O mesmo dentro do tmux | igual | sem cor: o `TERM` do tmux (`tmux-256color`) não está no terminfo do Mac; avise |
+| U3 | `copilot --version` e, com as sessões do Copilot fechadas, `fluxo panel enable` | a pergunta, e depois o `statusLine` no `~/.copilot/settings.json` | o `settings.json` não existia e o Copilot não o lê nessa versão: `copilot update`, e avise |
+| U4 | Uma sessão nova do Copilot, e `ls ~/.local/share/fluxo/estado/uso/` | um `<id>.json` que muda a cada resposta | nada: em `/statusline`, o item custom está marcado? Erro no `estado/hook-erros.log` ("copilot statusline")? |
+| U5 | Compare o nome do arquivo do U4 com o `sessao` da mesma sessão no `estado/eventos-*.jsonl` | o mesmo id | diferentes: o painel não junta o uso à sessão; avise |
+| U6 | Na aba 1, o contexto e o gasto contra o `/context` e o `/usage` da sessão | os mesmos números | avise com os dois números |
+| U7 | `/model` com outro effort, e a aba 1 | o modelo e o effort novos | o effort não muda: o `session.model_change` dessa versão não traz o `reasoningEffort` |
+| U8 | `ls ~/.cache/copilot ~/Library/Caches/copilot` | o `copilot-user-cache.json` em uma delas, e a cota na faixa do painel | em outro lugar: avise o caminho |
+| U9 | A cota da faixa contra a do `/usage` | o mesmo % (o painel mostra o usado) | outra conta: o `lastLoggedInUser` do `~/.copilot/config.json` não é a conta da cota; avise |
+| U10 | Com uma sessão aberta, rode o `enable` de novo e depois mude algo no `/settings` | o `statusLine` continua no `settings.json` | sumiu: o Copilot regrava o arquivo inteiro; avise |
+
 ## Config, receita no terminal e Tab (v0.12.0)
 
 | # | Teste | Esperado | Se falhar |

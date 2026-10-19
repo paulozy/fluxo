@@ -233,6 +233,17 @@ def notas_dos_modulos(cfg, modulos, raiz):
     return notas, recusar
 
 
+def menu_modulos(p, cfg, existentes, raiz, ligar):
+    """Os módulos a ligar, dentre os desligados, ou a desligar, dentre os ligados; [] se nenhum. Levanta Cancelado."""
+    opcoes = [m for m in existentes if (m not in cfg["modules"]) == ligar]
+    if not opcoes:
+        p.escrever("todos os módulos já estão ligados" if ligar else "nenhum módulo está ligado")
+        return []
+    notas, recusar = notas_dos_modulos(cfg, opcoes, raiz)
+    return p.varias(f"Módulos para {'ligar' if ligar else 'desligar'}:", opcoes, [], notas,
+                    recusar if ligar else None, vazio_ok=True)  # desligar sempre pode, mesmo o que não serve
+
+
 def perguntar(args, anterior, raiz, ler=input, saida=None, achar=shutil.which):
     """Preenche em `args` o que as flags não deram, com os valores de `anterior` (a config que já existe, ou
     {}) como padrão. `args.modulos` recebe os módulos escolhidos. Levanta Cancelado no EOF e no Ctrl-C."""

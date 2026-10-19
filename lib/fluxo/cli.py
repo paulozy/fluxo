@@ -58,9 +58,28 @@ def _adaptador(raiz, tool):
     return json.loads((Path(raiz) / "adaptadores" / "ferramenta" / f"{tool}.json").read_text(encoding="utf-8"))
 
 
-def cmd_modules(args, raiz):
+def cmd_modules(args, raiz, ler=input, saida=None, interativo=None):
     cam = _caminhos(args)
     existentes = montar.modulos_existentes(raiz)
+    vazias = [flag for flag, valor in (("--enable", args.enable), ("--disable", args.disable)) if valor == []]
+    if vazias:  # `--enable` sem nome: o menu escolhe
+        perguntas = _perguntas(args, ler, saida, interativo)
+        if not perguntas:
+            print(f"fluxo modules: {' e '.join(vazias)} sem módulo ({_dica(args)})", file=sys.stderr)
+            return 2
+        cfg = cfgmod.carregar(cam, existentes)
+        try:
+            for flag in ("enable", "disable"):
+                if getattr(args, flag) == []:
+                    setattr(args, flag, assistente.menu_modulos(perguntas, cfg, existentes, raiz, flag == "enable"))
+        except (assistente.Cancelado, KeyboardInterrupt):
+            return _cancelado(perguntas, "nada foi gravado")
+        if not (args.enable or args.disable):
+            perguntas.escrever("nada foi gravado")
+            return 0
+        _o_mesmo(perguntas, ["modules", *(["--enable", *args.enable] if args.enable else []),
+                             *(["--disable", *args.disable] if args.disable else []),
+                             *(["--home", args.home] if args.home else [])])
     if args.enable or args.disable:
         try:
             bruto = json.loads(cam.config.read_text(encoding="utf-8"))
@@ -499,9 +518,10 @@ def parser():
     p.add_argument("--output", help="pasta do zip (padrão: dist/)")
     p.set_defaults(fn=cmd_package)
 
-    p = sub.add_parser("modules", help="lista os módulos; --enable/--disable editam a config")
-    p.add_argument("--enable", nargs="+", metavar="MODULE")
-    p.add_argument("--disable", nargs="+", metavar="MODULE")
+    p = sub.add_parser("modules", help="lista os módulos; --enable/--disable editam a config (sem nome, num terminal, "
+                       "abrem o menu)")
+    p.add_argument("--enable", nargs="*", metavar="MODULE")
+    p.add_argument("--disable", nargs="*", metavar="MODULE")
     p.set_defaults(fn=cmd_modules)
 
     p = sub.add_parser("task", help="abre uma sessão numa janela do tmux (módulo task)")

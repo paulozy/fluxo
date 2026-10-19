@@ -2,6 +2,7 @@
 disso, o erro de sempre."""
 import contextlib
 import io
+import json
 import os
 import select
 import subprocess
@@ -165,6 +166,71 @@ class Task(unittest.TestCase):
                     contextlib.redirect_stderr(err):
                 self.assertEqual(cli.cmd_task(args, RAIZ, ler=ler), esperado)  # sem a marca, o EOF cancela
             self.assertEqual("Ação da sessão" in err.getvalue(), not extra)
+
+
+class Modules(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.home = Path(self.tmp.name).resolve()
+        self.cam = escrever_config(self.home, "claude", modules=["task", "watch"])
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def modules(self, *respostas, argv=(), interativo=True):
+        args = cli.parser().parse_args(["modules", "--home", str(self.home), *argv])
+        ler, perguntas, out, err = roteiro(*respostas), io.StringIO(), io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = cli.cmd_modules(args, RAIZ, ler=ler, saida=perguntas, interativo=interativo)
+        return code, out.getvalue(), perguntas.getvalue(), ler, err.getvalue()
+
+    def ligados(self):
+        return json.loads(self.cam.config.read_text(encoding="utf-8"))["modules"]
+
+    def test_ligar_pelo_menu(self):
+        code, out, perguntas, ler, _ = self.modules("panel", "lock, promote", argv=["--enable"])
+        self.assertEqual((code, ler.restantes), (0, []))
+        self.assertEqual(self.ligados(), ["task", "watch", "lock", "promote"])
+        self.assertIn("Módulos para ligar:", perguntas)
+        self.assertNotIn(") task", perguntas)  # só os desligados
+        self.assertIn("panel: requer tool:copilot|kiro|codex", perguntas)  # só com o Claude, o panel não serve
+        self.assertIn("o mesmo, sem menu: fluxo modules --enable lock promote --home ", perguntas)
+        self.assertIn("Agora: fluxo install", out)
+
+    def test_desligar_pelo_menu(self):
+        code, _, perguntas, _, _ = self.modules("2", argv=["--disable"])
+        self.assertEqual((code, self.ligados()), (0, ["task"]))
+        self.assertIn("Módulos para desligar:", perguntas)
+
+    def test_nenhum_nao_grava(self):
+        antes = self.cam.config.read_bytes()
+        for respostas in (("",), ("nenhum",)):
+            code, _, perguntas, _, _ = self.modules(*respostas, argv=["--enable"])
+            self.assertEqual((code, self.cam.config.read_bytes()), (0, antes))
+            self.assertIn("nada foi gravado", perguntas)
+        escrever_config(self.home, "copilot-tudo")
+        code, _, perguntas, ler, _ = self.modules("x", argv=["--enable"])
+        self.assertEqual((code, ler.restantes), (0, ["x"]))
+        self.assertIn("todos os módulos já estão ligados", perguntas)
+
+    def test_sem_terminal_e_erro(self):
+        antes = self.cam.config.read_bytes()
+        code, _, perguntas, ler, err = self.modules("lock", argv=["--enable"], interativo=False)
+        self.assertEqual((code, perguntas, ler.restantes, self.cam.config.read_bytes()), (2, "", ["lock"], antes))
+        self.assertIn("fluxo modules: --enable sem módulo (", err)
+
+    def test_cancelar_nao_grava(self):
+        antes = self.cam.config.read_bytes()
+        code, _, perguntas, _, _ = self.modules(KeyboardInterrupt, argv=["--disable"])
+        self.assertEqual((code, self.cam.config.read_bytes()), (130, antes))
+        self.assertIn("cancelado; nada foi gravado", perguntas)
+
+    def test_sem_flag_e_com_nome_nao_pergunta(self):
+        code, out, perguntas, ler, _ = self.modules("x")
+        self.assertEqual((code, perguntas, ler.restantes), (0, "", ["x"]))
+        self.assertIn("[x] task", out)
+        code, _, perguntas, ler, _ = self.modules("x", argv=["--enable", "lock"])
+        self.assertEqual((code, perguntas, ler.restantes, self.ligados()), (0, "", ["x"], ["task", "watch", "lock"]))
 
 
 class TaskNoPty(unittest.TestCase):

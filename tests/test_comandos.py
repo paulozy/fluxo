@@ -1,5 +1,7 @@
 """Os nomes que o fluxo grava e cita: o comando que outra ferramenta chama depois tem de existir no parser,
 nenhuma fonte cita grafia antiga, e cada módulo acha o próprio código."""
+import contextlib
+import io
 import json
 import plistlib
 import re
@@ -157,3 +159,134 @@ class Modulos(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Parser(unittest.TestCase):
+    """A ajuda agrupada e as ações como subcomandos, sem quebrar o argv de quem já chama o fluxo: os hooks instalados,
+    o processo de fundo do validate, o loop do watch no WSL, as skills e os testes."""
+
+    def parse(self, *argv):
+        return cli.parser().parse_args(list(argv))
+
+    def ajuda(self, *argv):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), self.assertRaises(SystemExit):
+            self.parse(*argv, "-h")
+        return out.getvalue()
+
+    def test_o_argv_de_hoje_continua_valendo(self):
+        casos = (["validate", "_rodar", "receita/api", "--home", "/h"], ["hook", "--tool", "copilot", "--event", "x"],
+                 ["panel", "--home", "/h", "--text"], ["panel", "enable"], ["watch"], ["watch", "tick"],
+                 ["watch", "loop", "--interval", "60"], ["watch", "enable", "--target", "main:"],
+                 ["lock", "acquire", "--id", "P-1", "--project", "p"], ["lock", "run", "--id", "P-1", "--wait", "5"],
+                 ["lock", "release", "--session", "s"], ["lock", "status"], ["lock", "break", "--force"],
+                 ["msg", "copy"], ["msg", "copy", "aviso.md"], ["msg", "tone"], ["task"], ["task", "P-1", "-p", "x"],
+                 ["modules", "--enable"], ["config"], ["config", "set", "tools", "copilot", "claude"],
+                 ["config", "list", "--json"], ["validate"], ["validate", "status", "--recipe", "api", "--wait", "9"],
+                 ["validate", "recipe", "api", "--check"], ["validate", "enable", "--profile", "x"], ["status"], [])
+        for argv in casos:
+            with self.subTest(argv=argv):
+                self.assertTrue(callable(self.parse(*argv).fn))
+        self.assertIs(self.parse().fn, cli.cmd_status)
+        self.assertEqual(self.parse("validate", "_rodar", "receita/api").alvo, "receita/api")
+
+    def test_flag_comum_antes_e_depois_da_acao(self):
+        for argv in (["validate", "--home", "/h", "--no-input", "start", "T1"],
+                     ["validate", "start", "T1", "--home", "/h", "--no-input"]):
+            with self.subTest(argv=argv):
+                args = self.parse(*argv)
+                self.assertEqual((args.home, args.no_input, args.acao, args.alvo), ("/h", True, "start", "T1"))
+        args = self.parse("validate", "enable")  # o que a ação não tem vem do padrão do pai
+        self.assertEqual((args.home, args.no_input, args.recipe, args.fix, args.wait), (None, False, None, False, 0))
+
+    def test_a_ajuda(self):
+        topo = self.ajuda()
+        for _, nomes in cli.GRUPOS:
+            for nome in nomes:
+                self.assertIn(f"\n  {nome} ", topo)
+        for oculto in ("hook", "_rodar", "--home", "==SUPPRESS=="):
+            self.assertNotIn(oculto, topo)
+        validar = self.ajuda("validate")
+        self.assertIn("recipe", validar)
+        self.assertIn("exemplos:", validar)
+        for oculto in ("_rodar", "--home", "==SUPPRESS=="):
+            self.assertNotIn(oculto, validar)
+        start = self.ajuda("validate", "start")
+        self.assertIn("--recipe", start)
+        self.assertNotIn("--profile", start)  # é só do enable
+
+    def test_todo_comando_tem_grupo(self):
+        visiveis = {n for n in cli.parser()._subparsers._group_actions[0].choices if n != "hook"}
+        self.assertEqual(visiveis, {n for _, nomes in cli.GRUPOS for n in nomes})
+
+    def test_a_versao_e_a_do_changelog(self):
+        topo = re.search(r"^## \[([0-9.]+)\]", (RAIZ / "CHANGELOG.md").read_text(encoding="utf-8"), re.M).group(1)
+        self.assertEqual(cli.__version__, topo)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), self.assertRaises(SystemExit):
+            self.parse("--version")
+        self.assertEqual(out.getvalue(), f"fluxo {topo}\n")
+
+    def test_erro_de_uso_em_portugues(self):
+        for argv, trecho in ((["lock"], "fluxo lock: falta <ação>"), (["validate", "xis"], "'xis' não existe aqui"),
+                             (["task", "--xis"], "não conheço --xis")):
+            err = io.StringIO()
+            with self.subTest(argv=argv), contextlib.redirect_stderr(err), self.assertRaises(SystemExit) as fim:
+                self.parse(*argv)
+            self.assertEqual(fim.exception.code, 2)
+            self.assertIn(trecho, err.getvalue())
+
+
+class Status(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.home = Path(self.tmp.name).resolve()
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def status(self):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+            code = cli.main(["status", "--home", str(self.home)], RAIZ)
+        return code, out.getvalue()
+
+    def test_sem_config(self):
+        code, out = self.status()
+        self.assertEqual(code, 0)
+        self.assertIn("sem config", out)
+        self.assertIn("fluxo init", out)
+
+    def test_com_config(self):
+        escrever_config(self.home, "claude-tudo")
+        code, out = self.status()
+        self.assertEqual(code, 0)
+        linhas = {l.split()[0]: l.split(None, 1)[1] for l in out.splitlines()[1:] if l.startswith("  ")}
+        self.assertEqual(set(linhas), {"config", "ferramentas", "módulos", "install", "sessões", "validações",
+                                       "pr-reviewer", "trava", "watch"})
+        self.assertIn("claude · github · linux", linhas["ferramentas"])
+        self.assertIn("a gravar", linhas["install"])  # nada foi instalado ainda
+        self.assertEqual(linhas["sessões"], "nenhuma aberta")
+        self.assertIn("fluxo validate enable", linhas["pr-reviewer"])
+        with contextlib.redirect_stdout(io.StringIO()):
+            cli.main(["install", "--home", str(self.home)], RAIZ)
+        self.assertIn("install      em dia", self.status()[1])
+
+    def test_so_os_modulos_ligados(self):
+        escrever_config(self.home, "claude")  # sem módulo nenhum
+        linhas = {l.split()[0] for l in self.status()[1].splitlines()[1:] if l.startswith("  ")}
+        self.assertEqual(linhas, {"config", "ferramentas", "módulos", "install"})
+
+    def test_ctrl_c_fora_de_uma_pergunta(self):
+        escrever_config(self.home, "claude")
+        err = io.StringIO()
+        with mock.patch.object(cli, "cmd_status", side_effect=KeyboardInterrupt), contextlib.redirect_stderr(err):
+            self.assertEqual(cli.main(["status", "--home", str(self.home)], RAIZ), 130)
+        self.assertIn("interrompido", err.getvalue())
+        self.assertNotIn("Traceback", err.getvalue())
+
+    def test_config_que_nao_fecha(self):
+        escrever_config(self.home, "claude", forge="bitbucket")
+        code, out = self.status()
+        self.assertEqual(code, 0)
+        self.assertIn("a config não fecha", out)

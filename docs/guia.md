@@ -182,6 +182,11 @@ fluxo doctor
 
 Cada linha sai com `OK`, `AVISO` ou `FALHA`. Só a `FALHA` faz o `doctor` sair com 1.
 
+**O resumo do dia a dia:** `fluxo` sozinho (ou `fluxo status`) mostra, só com leitura local:
+- a config, as ferramentas e os módulos;
+- se o install está em dia;
+- as sessões vivas, as validações rodando, a trava do stack e o watch, de cada módulo ligado.
+
 ### 2.4 O que muda em cada ferramenta
 
 | | Claude Code | Copilot CLI | Kiro CLI | Codex CLI |
@@ -207,6 +212,56 @@ python3 -m zipfile -e fluxo-<versão>.zip ~/fluxo-src
 python3 ~/fluxo-src/fluxo/fluxo init
 python3 ~/fluxo-src/fluxo/fluxo install
 ```
+
+### 2.6 Mudar a config depois: `fluxo config`
+
+```bash
+fluxo config                                  # num terminal: o menu, uma chave por vez
+fluxo config list                             # o valor de cada chave, e de onde ele vem (padrão, config)
+fluxo config set task.max 3
+fluxo config set tools copilot claude         # a lista em vários argumentos, ou copilot,claude
+fluxo config set pr-reviewer.backend copilot  # grava na config do pr-reviewer
+fluxo config get git.base
+fluxo config unset task.max                   # volta ao padrão
+fluxo config edit                             # o editor ($VISUAL, $EDITOR ou vi), validado antes de gravar
+fluxo config path
+```
+
+**Como ele se comporta:**
+- **O `set` valida a config inteira antes de gravar.** Uma lista do `promote.targets` que inclui a `git.base`,
+  por exemplo, é recusada, e nada é gravado.
+- **O `get`** sai com 1, e nada no stdout, quando a chave não tem valor nem padrão. Uma chave desconhecida sai com
+  2 e sugere a mais parecida.
+- **O `edit`** abre uma cópia e só grava o que passa na validação. Se não passar, pergunta se edita de novo ou
+  descarta, como o visudo.
+- **Uma config que não fecha não trava o `fluxo config`,** que é quem a conserta. O `list` avisa e mostra o que dá,
+  o `set` e o `unset` validam só o resultado, e um JSON inválido se conserta pelo `edit`.
+- **As chaves `pr-reviewer.backend` e `pr-reviewer.profile`** gravam na config do pr-reviewer. Ela tem de existir
+  antes (`fluxo validate enable`). Se ela for um link, como no dotfiles, o link fica e o alvo é que muda, com o
+  mesmo modo.
+- **Ficam de fora:**
+  - os módulos, que são do `fluxo modules`;
+  - o `task.launch`, que é argv e se muda com o `fluxo config edit`.
+- **Uma chave que muda o que o install grava,** como as ferramentas, o forge, a base ou os modelos: num terminal,
+  o fluxo pergunta se roda o `fluxo install` na hora. O `modules` também pergunta.
+
+### 2.7 O completar com Tab
+
+```bash
+fluxo completion zsh > ~/.zfunc/_fluxo        # e no .zshrc, antes do compinit: fpath=(~/.zfunc $fpath)
+fluxo completion bash > ~/.local/share/bash-completion/completions/fluxo.bash
+```
+
+**O que o Tab completa:**
+- os comandos, as ações e as flags;
+- os módulos do `--enable` e do `--disable`;
+- as chaves do `config`, e os valores das que têm lista fechada;
+- os IDs das tarefas abertas pelo `fluxo task`;
+- as execuções do `validate status` e do `validate stop`;
+- as pastas do `code_dir` no `validate recipe`.
+
+O script só pergunta ao próprio fluxo (`fluxo __complete`), então não precisa ser gerado de novo depois de
+atualizar. O fluxo não mexe no seu `.zshrc`: a linha do `fpath` vai no seu dotfiles.
 
 ## 3. Uma tarefa de ponta a ponta
 
@@ -555,11 +610,15 @@ fluxo validate enable
   fixa, e confere o sha do commit.
   - O repo é privado: o `gh auth setup-git` libera o acesso.
   - Com ssh: `git config --global url.git@github.com:paulozy/.insteadOf https://github.com/paulozy/`.
-- **Cria `~/.config/pr-reviewer/config.json`, só se não existir,** com `workspaceRoot` = a pasta dos clones, as
-  bases do `git.base` e o perfil `local` (o `--profile <nome>` troca).
+- **Cria `~/.config/pr-reviewer/config.json`, só se não existir,** com:
+  - `workspaceRoot` = a pasta dos clones;
+  - as bases do `git.base`;
+  - o perfil `local` (o `--profile <nome>` troca);
+  - o `backend` = a primeira ferramenta de `tools`. Sem ele, o pr-reviewer roda os agentes no `claude -p`. Para
+    trocar depois: `fluxo config set pr-reviewer.backend <ferramenta>`.
 - **Cria o comando `~/.local/bin/pr-review`, só se não houver um.**
 
-Depois, `fluxo doctor` mostra a linha do pr-reviewer, e `fluxo validate exec -- doctor` roda o doctor dele.
+Depois, `fluxo doctor` mostra a linha do pr-reviewer, e `fluxo validate doctor` roda o doctor dele.
 **Esse doctor faz uma chamada de verdade ao agente,** de até US$ 0,30 no Claude, para testar a cerca contra
 segredos.
 
@@ -588,6 +647,20 @@ Sem runbook, a validação fica só com a revisão estática, e o `status` mostr
    preencher.
 5. A sessão testa com `--check`, que sobe o stack sem agente e relata cada passo. Se falhar, ela faz no máximo um
    `--fix`, com a mesma confirmação.
+
+**Pelo terminal, sem sessão:**
+
+```bash
+fluxo validate recipe api            # propõe, mostra o resumo e o diff, e pergunta o "sim" aqui mesmo
+fluxo validate recipe api --check    # sobe o stack com o runbook, segurando a trava (módulo lock)
+fluxo validate recipe api --fix      # refaz com o último --check que falhou
+fluxo validate recipe                # sem repo: o menu pergunta o repo e o modo
+```
+
+- **O agente** é o backend da config do pr-reviewer; o `--backend <ferramenta>` troca só desta vez.
+- **Sem terminal, ou dentro de um agente,** o `recipe` vai com `--json`. Nada é gravado, e ele mostra o comando do
+  `--apply`.
+- **O Ctrl-C** chega ao pr-review, que derruba o que subiu. A trava só sai depois que ele termina.
 
 ### 5.3 `/validar PROJ-12`
 
@@ -646,6 +719,7 @@ Para usar o Copilot e, quando a cota acabar, o Claude, escolha as duas no `init`
 | `sem config em …: rode fluxo init` | ainda não houve `init` nesta máquina (ou noutro `XDG_CONFIG_HOME`) | `./fluxo init` |
 | `o módulo X está desligado` | o comando é de um módulo desligado | `fluxo modules --enable X && fluxo install` |
 | `o módulo panel requer tool:copilot\|kiro\|codex` | o panel não existe no Claude | tire o módulo, ou ponha outra ferramenta em `tools` |
+| `claude falhou (success): Not logged in` no `validate recipe` ou no `doctor` | a config do pr-reviewer não tem `backend`, e o padrão dele é o claude (o `doctor` do fluxo avisa) | `fluxo config set pr-reviewer.backend <a sua>` |
 | `fluxo: command not found` depois do install | o `~/.local/bin` não está no PATH (o `doctor` avisa) | ponha o `~/.local/bin` no PATH do shell |
 | Codex ignora as instruções do fluxo | um `AGENTS.override.md` não vazio (o `doctor` avisa) | esvazie o override, ou junte as instruções nele |
 | Codex lê outra pasta | o `CODEX_HOME` aponta para fora de `~/.codex`, onde o fluxo grava (o `doctor` avisa) | tire o `CODEX_HOME`, ou aponte-o para `~/.codex` |
@@ -681,13 +755,16 @@ fluxo doctor
 | `fluxo install [--dry-run] [--force] [-v]` | grava instruções, agentes e skills |
 | `fluxo uninstall [--dry-run]` | tira o que o fluxo gravou; o que você editou fica |
 | `fluxo doctor` | confere a máquina |
+| `fluxo` ou `fluxo status` | o resumo: a config, os módulos, o install e o que está rodando |
+| `fluxo config [list \| get \| set \| unset \| edit \| path]` | mostra e muda a config; sem ação, num terminal, o menu |
 | `fluxo modules [--enable …] [--disable …]` | lista, liga e desliga módulos; sem nome, num terminal, pergunta |
 | `fluxo task [<ID>] [-p …] [--tool …] [--list]` | sessões no tmux (módulo `task`); sem ID, num terminal, pergunta |
 | `fluxo msg tone \| copy` | o tom e a área de transferência (módulo `messages`) |
 | `fluxo lock acquire \| release \| status \| break \| run` | a trava do stack (módulo `lock`) |
 | `fluxo watch [tick \| enable \| disable]` | aviso das PRs/MRs (módulo `watch`) |
 | `fluxo panel [enable \| disable] [--text]` | o painel (módulo `panel`) |
-| `fluxo validate [enable \| disable \| start \| status \| stop \| exec]` | o pr-reviewer (módulo `validate`); sem ação, num terminal, pergunta |
+| `fluxo validate [enable \| disable \| start \| status \| stop \| recipe \| doctor \| exec]` | o pr-reviewer (módulo `validate`); sem ação, num terminal, pergunta |
+| `fluxo completion zsh \| bash` | o script do completar com Tab |
 | `fluxo package` | o zip para máquina sem git |
 | `fluxo scan` | procura dado de empresa no repo do fluxo |
 

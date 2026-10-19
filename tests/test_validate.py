@@ -1,4 +1,5 @@
 """Módulo validate: o enable traz o pr-reviewer numa tag fixada, e nada que você mudou no clone se perde."""
+import contextlib
 import io
 import json
 import os
@@ -90,7 +91,7 @@ class EnableDisable(unittest.TestCase):
         self.assertFalse([p for p in self.clone.parent.iterdir() if p.name.startswith(".pr-reviewer.")], "no temp dir left")
         conf = json.loads(self.config_pr.read_text())
         self.assertEqual(conf, {"workspaceRoot": os.path.expanduser("~/code-de-teste"), "primaryBase": "develop",
-                                "defaultBase": "origin/develop", "profile": "local"})
+                                "defaultBase": "origin/develop", "profile": "local", "backend": "claude"})
         self.assertEqual(stat.S_IMODE(self.config_pr.stat().st_mode), 0o600)
         self.assertEqual(stat.S_IMODE(self.config_pr.parent.stat().st_mode), 0o700)
         self.assertEqual(self.bin.read_text(), validate.wrapper(self.clone))
@@ -650,6 +651,70 @@ class Linha(unittest.TestCase):
     def test_disable_vale_com_o_modulo_desligado(self):
         code, _, cam = self.cli("disable", modules=(), clone=False)
         self.assertEqual(code, 0)
+
+    def test_em_primeiro_plano(self):
+        class Proc:
+            def __init__(self, codigo, ctrl_c=False):
+                self.codigo, self.ctrl_c, self.sinais = codigo, ctrl_c, []
+
+            def wait(self):
+                if self.ctrl_c:  # o SIGINT chega enquanto o pr-review roda
+                    signal.getsignal(signal.SIGINT)(signal.SIGINT, None)
+                return self.codigo
+
+            def poll(self):
+                return None
+
+            def send_signal(self, sinal):
+                self.sinais.append(sinal)
+
+        tmp = Path(tempfile.mkdtemp(prefix="fluxo-validate-"))
+        self.addCleanup(shutil.rmtree, tmp, True)
+        self.cam = cfgmod.Caminhos(home=tmp)
+        vistos = []
+        popen = lambda argv: vistos.append(argv) or Proc(5)
+        self.assertEqual(validate.em_primeiro_plano(self.cam, ["node", "x"], popen=popen), 5)
+        self.assertEqual(vistos, [["node", "x"]])
+        for do_terminal, repassado in ((True, []), (False, [signal.SIGINT])):
+            # do Ctrl-C do terminal, o pr-review já recebeu o dele; de um kill -INT só no fluxo, não
+            proc = Proc(0, ctrl_c=True)
+            with self.subTest(do_terminal=do_terminal), \
+                    mock.patch.object(validate.lock, "_ctrl_c_do_terminal", return_value=do_terminal):
+                self.assertEqual(validate.em_primeiro_plano(self.cam, ["x"], popen=lambda a: proc), 130)
+                self.assertEqual(proc.sinais, repassado)
+        self.assertIs(signal.getsignal(signal.SIGINT), signal.default_int_handler)
+        with mock.patch.object(validate.lock, "rodar", return_value=6) as rodar:
+            self.assertEqual(validate.em_primeiro_plano(self.cam, ["x"], "receita/api", True, 30, popen=popen), 6)
+        self.assertEqual(rodar.call_args[0][1:3], (["x"], 30))
+        self.assertIsInstance(rodar.call_args[0][0], validate.lock.Trava)
+        # uma sessão só desta chamada: com o nome da de fundo, o Trava.pegar a aceitaria como dona de novo
+        self.assertEqual(rodar.call_args[1]["sessao"], f"validar-aqui-receita-api-{os.getpid()}")
+
+    def test_em_primeiro_plano_recusa_com_a_de_fundo_rodando(self):
+        tmp = Path(tempfile.mkdtemp(prefix="fluxo-validate-"))
+        self.addCleanup(shutil.rmtree, tmp, True)
+        cam = cfgmod.Caminhos(home=tmp)
+        with mock.patch.object(validate, "_rodando", return_value=True), \
+                mock.patch.object(validate.lock, "rodar") as rodar, \
+                self.assertRaisesRegex(cfgmod.ErroConfig, "já há uma execução de receita/api rodando"):
+            validate.em_primeiro_plano(cam, ["x"], "receita/api", True)
+        rodar.assert_not_called()
+
+    def test_trava_de_fundo_e_a_de_primeiro_plano_nao_se_misturam(self):
+        """O cenário da revisão: a de fundo segura a trava; a do terminal, com outra sessão, fica de fora (4)."""
+        tmp = Path(tempfile.mkdtemp(prefix="fluxo-validate-"))
+        self.addCleanup(shutil.rmtree, tmp, True)
+        cam = cfgmod.Caminhos(home=tmp)
+        cfgmod.criar_estado(cam.estado)
+        trava = validate.lock.Trava(cam.estado)
+        fundo = subprocess.Popen(["sleep", "30"])  # o processo de fundo, vivo (o pai, num container, é o pid 1)
+        self.addCleanup(fundo.wait)
+        self.addCleanup(fundo.kill)
+        trava.pegar("validar-receita-api", pid=fundo.pid)
+        with mock.patch.object(validate, "_rodando", return_value=False), contextlib.redirect_stderr(io.StringIO()):
+            codigo = validate.em_primeiro_plano(cam, ["x"], "receita/api", True, popen=lambda a: self.fail("rodou"))
+        self.assertEqual(codigo, validate.lock.OCUPADA)
+        self.assertEqual(trava.ler()["sessao"], "validar-receita-api")
 
     def test_init_mantem_a_chave_validate(self):
         tmp = Path(tempfile.mkdtemp(prefix="fluxo-validate-"))

@@ -171,6 +171,17 @@ terminal aos comandos (e o Codex com `tty:true` vem com `TERM=dumb`), mas o Kiro
 | M1 | Kiro: peça "rode `fluxo task --dry-run` e me mostre a saída" | o erro "informe o ID da tarefa", na hora | a sessão trava esperando: o shell do Kiro dá terminal e não põe `AGENT_CONTEXT_OUT` nem `AGENT_DISPLAY_OUT`; avise, com a saída de `env` e de `python3 -c "import sys; print(sys.stdin.isatty(), sys.stdout.isatty())"` rodados pela sessão |
 | M2 | Num terminal seu: `fluxo task`, `fluxo validate` e `fluxo modules --enable` | o menu de cada um, e Ctrl-C sai com 130 sem abrir nem gravar nada | o erro de sempre: confira se o shell tem alguma das marcas de agente (`env`) |
 
+## Config, receita no terminal e Tab (v0.12.0)
+
+| # | Teste | Esperado | Se falhar |
+|---|---|---|---|
+| C1 | Na máquina com o Copilot: `fluxo config set pr-reviewer.backend copilot`, depois `fluxo validate doctor` | o doctor do pr-reviewer no Copilot, sem o "Not logged in" do claude | o backend não foi gravado: `fluxo config get pr-reviewer.backend` e `fluxo config path` |
+| C2 | Onde a config do pr-reviewer é um link do dotfiles: o mesmo `set` | o link fica, e o arquivo do dotfiles muda com o mesmo modo | virou arquivo comum: avise |
+| C3 | `fluxo validate recipe <repo>` num terminal | o resumo, o diff e a pergunta "Digite sim", ali mesmo | sai com 5 e o comando do `--apply`: o `/dev/tty` não abriu; avise |
+| C4 | zsh: o `fluxo completion zsh > ~/.zfunc/_fluxo`, o `fpath` no dotfiles, um shell novo, `fluxo val<Tab>` e `fluxo config set <Tab>` | completa `validate` e as chaves, com a descrição | nada: confira o `fpath` antes do `compinit` (e apague o `~/.zcompdump`) |
+| C5 | bash: o script em `~/.local/share/bash-completion/completions/fluxo.bash`, `fluxo modules --enable <Tab>` | os módulos desligados | nada: o bash-completion não está carregado nesse shell |
+| C6 | `fluxo` sozinho | o resumo, com o install, as sessões e a trava | avise |
+
 ## Depois
 
 Registre o resultado de cada linha no CHANGELOG, na versão que fechar a validação. O que divergiu

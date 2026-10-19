@@ -1,5 +1,45 @@
 # Changelog
 
+## [0.12.0] — 2026-10-19
+
+### Adicionado
+
+- **`fluxo config`:** mostra e muda a config sem abrir o arquivo.
+  - Os verbos: `list` (com a origem de cada valor), `get`, `set`, `unset`, `edit` (validado antes de gravar, como
+    o visudo) e `path`.
+  - Num terminal, `fluxo config` abre o menu.
+  - As chaves `pr-reviewer.backend` e `pr-reviewer.profile` gravam na config do pr-reviewer, seguindo o link,
+    se ela for um.
+  - Depois de uma chave que muda os arquivos instalados, e depois do `modules`, ele pergunta se roda o
+    `fluxo install`.
+- **`fluxo validate recipe <repo> [--check | --fix]` e `fluxo validate doctor`:** o pr-reviewer neste terminal.
+  - A receita mostra a proposta e pergunta o "sim" ali mesmo.
+  - Sem terminal, ou num agente, ela vai com `--json` e não grava nada.
+  - O `--check` segura a trava do stack.
+- **`fluxo status`, que é também o `fluxo` sozinho:** a config, os módulos, se o install está em dia, as sessões,
+  as validações, a trava e o watch.
+- **`fluxo completion zsh|bash`:** o completar com Tab. O script pergunta ao próprio fluxo, então não envelhece.
+- **`fluxo --version`.**
+
+### Mudado
+
+- **A config do pr-reviewer que o `validate enable` cria já sai com o `backend`** da primeira ferramenta de
+  `tools`. Antes, numa máquina com o Copilot, o `exec -- recipe` caía no `claude -p`. O `doctor` avisa quando o
+  backend não está em `tools`.
+- **A ajuda:**
+  - o `fluxo -h` mostra os comandos por área;
+  - cada ação virou um subcomando, com a própria ajuda e exemplos (`fluxo validate start -h`);
+  - o `hook`, o `_rodar` e o `--home` saíram da ajuda e continuam funcionando;
+  - os erros de uso mais comuns saem em português.
+- **Uma flag que não é da ação agora é erro de uso** (`fluxo validate status --fix`, `fluxo panel enable --view`),
+  ainda com saída 2.
+- **As flags de uma ação vêm depois dela:** `fluxo lock acquire --id X`, e não `fluxo lock --id X acquire`. Só o
+  `--home` e o `--no-input` valem dos dois lados. Nenhum comando gerado pelo fluxo, nenhuma skill e nenhum doc usava a
+  outra ordem.
+- **As configs são gravadas de forma segura:** o arquivo nunca fica pela metade, o link e o modo são mantidos, e
+  nada é gravado se o arquivo mudou no meio. JSON com chave repetida é recusado.
+- **No Ctrl-C, o `lock run` espera o comando terminar** antes de soltar a trava.
+
 ## [0.11.0] — 2026-10-19
 
 ### Adicionado

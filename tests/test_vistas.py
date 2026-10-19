@@ -494,7 +494,8 @@ class CLI(unittest.TestCase):
                 self.assertIn(trecho, out)
 
     def test_recusas(self):
-        self.assertEqual(self.rodar("enable", "--view", "task")[0], 2)
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):  # as abas não são do enable
+            cli.main(["panel", "enable", "--home", str(self.home), "--view", "task"], RAIZ)
         self.assertEqual(self.rodar("--text", "--task", "../x")[0], 2)
         with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
             cli.main(["panel", "--home", str(self.home), "--view", "sessão"], RAIZ)

@@ -9,6 +9,7 @@ import threading
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from base import RAIZ, escrever_config
 from fluxo import cli, lock
@@ -173,6 +174,47 @@ class Trava(unittest.TestCase):
                 self.assertIsNone(self.t.ler())
                 self.assertEqual(signal.getsignal(sinal), signal.SIG_DFL)  # o handler antigo voltou
                 filho[0].stdout.close()
+
+    def test_ctrl_c_espera_o_comando(self):
+        """Do Ctrl-C do terminal, o comando (do mesmo grupo) já recebe o dele: o fluxo não repassa e só espera. De um
+        `kill -INT` só no fluxo, sem terminal, o fluxo repassa. Nos dois, a trava sai depois da limpeza dele."""
+        for do_terminal in (True, False):
+            with self.subTest(do_terminal=do_terminal):
+                pronto, contagem = self.estado / f"limpou-{do_terminal}", self.estado / f"ints-{do_terminal}"
+                script = (f"import signal, sys, time\n"
+                          f"def fim(s, f):\n    open({str(contagem)!r}, 'a').write('x')\n    time.sleep(0.3)\n"
+                          f"    open({str(pronto)!r}, 'w').close()\n    sys.exit(0)\n"
+                          f"signal.signal(signal.SIGINT, fim)\nprint('ok', flush=True)\ntime.sleep(10)\n")
+                filho, repassados = [], []
+
+                def popen(cmd):
+                    p = subprocess.Popen(cmd, stdout=subprocess.PIPE, text=True)
+                    p.stdout.readline()
+                    filho.append(p)
+                    real = p.send_signal
+                    p.send_signal = lambda sinal: (repassados.append(sinal), real(sinal))
+                    threading.Timer(0.1, os.kill, (os.getpid(), signal.SIGINT)).start()
+                    if do_terminal:  # o terminal manda o SIGINT ao grupo inteiro
+                        threading.Timer(0.1, os.kill, (p.pid, signal.SIGINT)).start()
+                    return p
+
+                with mock.patch.object(lock, "_ctrl_c_do_terminal", return_value=do_terminal):
+                    codigo = lock.rodar(self.t, ["python3", "-c", script], 0, popen=popen, sessao="s1", pid=500)
+                self.assertEqual(codigo, 128 + signal.SIGINT)
+                self.assertEqual(repassados, [] if do_terminal else [signal.SIGINT])
+                self.assertTrue(pronto.exists())  # a limpeza do comando terminou antes de soltar
+                self.assertEqual(contagem.read_text(), "x")
+                self.assertIsNone(self.t.ler())
+                self.assertIs(signal.getsignal(signal.SIGINT), signal.default_int_handler)
+                filho[0].stdout.close()
+
+    def test_rodar_sem_trava(self):
+        class Proc:
+            def wait(self):
+                return 3
+
+        self.assertEqual(lock.rodar(None, ["x"], 0, popen=lambda c: Proc(), sessao="s1", pid=500), 3)
+        self.assertIsNone(self.t.ler())
 
     def test_pegar_esperando(self):
         self.t.pegar("s1", pid=500)

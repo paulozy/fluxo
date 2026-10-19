@@ -11,14 +11,16 @@ destino muda conforme o readline esteja importado e o stdin seja terminal (Parse
 readline não é importado: no Python do Xcode ele é libedit.
 """
 import json
+import os
 import re
 import shlex
 import shutil
 import sys
+import tempfile
 from pathlib import Path
 
+from . import ajustes, montar, task, validate
 from . import config as cfgmod
-from . import montar, task, validate
 
 
 class Cancelado(Exception):
@@ -228,7 +230,9 @@ ACOES_VALIDATE = {"enable": "clona o pr-reviewer, ou leva o clone para a tag des
                   "disable": "tira o clone",
                   "start": "revisa uma tarefa, ou roda o runbook de um repo, em segundo plano",
                   "status": "acompanha uma execução",
-                  "stop": "cancela uma execução"}
+                  "stop": "cancela uma execução",
+                  "recipe": "o runbook de um repo, neste terminal: propõe, mostra e pergunta antes de gravar",
+                  "doctor": "o doctor do pr-reviewer: o binário, o login e a sonda de contenção"}
 MODOS_RECEITA = {"proposta": "um agente lê o código e propõe o runbook",
                  "check": "sobe o stack com o runbook, sem agente",
                  "fix": "refaz com o último --check que falhou"}
@@ -262,10 +266,91 @@ def menu_validate_alvo(p, cam, acao, modo=None):
                 return f"a tarefa {r} não tem plano: o /planejar grava o plano antes"
             return None
         return p.texto("ID da tarefa", None, valida_id), None, None
+    repo, modo = menu_receita(p, modo)
+    return None, repo, modo
+
+
+def menu_receita(p, modo=None):
+    """(repo, modo) da receita; o modo só é perguntado se as flags não deram. Levanta Cancelado."""
     repo = p.texto("Repo (o nome da pasta, em code_dir)", None,
                    lambda r: None if validate.RECEITA_RE.fullmatch(r) else "nome de repo inválido: letras, números, "
                    "hífen e sublinhado")
-    return None, repo, modo or p.uma("Modo da receita:", list(MODOS_RECEITA), "proposta", MODOS_RECEITA)
+    return repo, modo or p.uma("Modo da receita:", list(MODOS_RECEITA), "proposta", MODOS_RECEITA)
+
+
+def menu_config(p, arqs, mudadas):
+    """O `fluxo config` num terminal: escolhe a chave, vê o valor e a ajuda, digita o novo e grava com o ok, até o
+    "sair". Cada mudança é gravada na hora; `mudadas` recebe as chaves gravadas (o chamador oferece o install).
+    Levanta Cancelado."""
+    while True:
+        chaves = ajustes.visiveis(arqs.cfg, arqs.bruto)
+        notas = {c.nome: ajustes.mostrar(arqs.valor(c)[0]) or "—" for c in chaves}
+        nome = p.uma("Config (Enter sai):", [c.nome for c in chaves] + ["sair"], "sair", notas)
+        if nome == "sair":
+            return
+        c = ajustes.POR_NOME[nome]
+        atual, _ = arqs.valor(c)
+        p.escrever(f"\n{c.nome}: {c.ajuda}" + ("; muda os arquivos instalados" if c.install else ""))
+        novo = _pedir_valor(p, c, atual)
+        if novo == atual:
+            p.escrever("  nada mudou")
+            continue
+        if not p.sim(f"{c.nome}: {ajustes.mostrar(atual) or '—'} → {ajustes.mostrar(novo)}. Gravar?", True):
+            continue
+        try:
+            if arqs.gravar(c, novo):
+                mudadas.append(c)
+                p.escrever(f"  {c.nome} gravada")
+        except cfgmod.ErroConfig as exc:  # a config inteira não fecha (ex.: o promote.targets com a git.base)
+            p.escrever(f"  {exc}; nada foi gravado")
+            arqs.recarregar()  # se foi "mudou no meio", os bytes velhos recusariam as próximas
+
+
+def _pedir_valor(p, c, atual):
+    if c.tipo == ajustes.ESCOLHA:
+        return p.uma(f"{c.nome}:", list(c.escolhas), atual)
+    if c.tipo == ajustes.LISTA and c.escolhas:
+        return p.varias(f"{c.nome} (a ordem vale):", list(c.escolhas), atual or [])
+
+    def valida(r):
+        try:
+            ajustes.converter(c, [r])
+        except cfgmod.ErroConfig as exc:
+            return str(exc)
+        return None
+    return ajustes.converter(c, [p.texto(c.nome, ajustes.mostrar(atual) or None, valida)])
+
+
+def editar_config(p, arqs, abrir):
+    """O `fluxo config edit`: edita uma cópia e só grava o que passa na validação, como o visudo. `abrir(caminho)`
+    roda o editor. Devolve True se gravou. Levanta Cancelado."""
+    fd, tmp = tempfile.mkstemp(prefix=".config-editando.", suffix=".json", dir=str(arqs.cam.config_dir))
+    try:
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(arqs.lido)
+        while True:
+            abrir(tmp)
+            try:
+                dados, _ = cfgmod.ler_json(tmp)
+                cfgmod.validar(dados, arqs.existentes)
+            except cfgmod.ErroConfig as exc:
+                p.escrever(f"  {exc}")
+                if p.uma("A config não passou:", ["editar", "descartar"], "editar",
+                         {"editar": "abre de novo, com o que você escreveu", "descartar": "não grava nada"}) == "descartar":
+                    p.escrever("nada foi gravado")
+                    return False
+                continue
+            if dados == arqs.bruto:
+                p.escrever("nada mudou")
+                return False
+            cfgmod.gravar_json(arqs.cam.config, dados, antes=arqs.lido)
+            p.escrever(f"config gravada em {arqs.cam.config}")
+            return True
+    finally:
+        try:
+            os.unlink(tmp)
+        except FileNotFoundError:
+            pass
 
 
 def notas_dos_modulos(cfg, modulos, raiz):

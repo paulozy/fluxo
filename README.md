@@ -22,7 +22,11 @@ cd ~/fluxo
 ./fluxo install --dry-run     # mostra o que vai gravar
 ./fluxo install
 fluxo doctor                  # o install cria ~/.local/bin/fluxo
+fluxo                         # o resumo: a config, os módulos, o install e o que está rodando
 ```
+
+Depois, `fluxo config` muda a config sem abrir o arquivo (o menu num terminal, ou `fluxo config set task.max 3`),
+`fluxo -h` mostra os comandos por área e `fluxo completion zsh|bash` gera o completar com Tab.
 
 O `init` pergunta cada opção no terminal, com o padrão entre colchetes (Enter aceita). As listas aceitam os
 números ou os nomes, separados por vírgula:
@@ -129,7 +133,8 @@ O `fluxo install` não usa rede. Quem traz o pr-reviewer é o `fluxo validate en
   que é conferido) em `~/.local/share/fluxo/pr-reviewer`, por HTTPS, com o seu acesso ao GitHub: o
   `gh auth setup-git` libera o repo privado; com ssh, `git config --global url.git@github.com:paulozy/.insteadOf https://github.com/paulozy/`;
 - cria `~/.config/pr-reviewer/config.json` só se não existir: `workspaceRoot` = `code_dir`, as bases do
-  `git.base` e o perfil `local` (`--profile <nome>` troca);
+  `git.base`, o perfil `local` (`--profile <nome>` troca) e o `backend` = a primeira ferramenta de `tools`
+  (`fluxo config set pr-reviewer.backend` troca depois);
 - cria o comando `~/.local/bin/pr-review` só se não houver um. As skills não dependem dele: usam
   `fluxo validate`.
 
@@ -145,6 +150,9 @@ na config: o fluxo nunca mexe nele.
 - `fluxo validate status <id> [--wait 100]` (ou `--recipe <repo>`) acompanha: saída 75 é "ainda rodando", e no
   fim a primeira linha é o veredito, lido do `report.json`. `fluxo validate stop <id>` cancela, e o pr-reviewer
   derruba o stack antes de sair.
+- `fluxo validate recipe <repo> [--check|--fix]` faz a receita neste terminal: mostra a proposta e pergunta o
+  "sim" ali mesmo; o `--check` segura a trava do stack.
+- `fluxo validate doctor` roda o doctor do pr-reviewer (chama o agente de verdade).
 - `fluxo validate exec -- <args>` roda o pr-reviewer do clone (o `--apply` da receita vai por ele).
 
 No Copilot, os agentes do pr-reviewer rodam no próprio Copilot, com o login do keychain (no Linux, a sessão precisa

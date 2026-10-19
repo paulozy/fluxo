@@ -166,7 +166,7 @@ class Doctor(unittest.TestCase):
         self.assertNotIn(doctor.AVISO, [n for n, _ in r], r)
         self.assertIn((doctor.OK, "node v22.18.0"), r)
         self.assertTrue(any(t.startswith(f"pr-reviewer {validate_mod.PR_REVIEWER['tag']} em ") for _, t in r))
-        self.assertIn((doctor.OK, "para conferir os agentes de verdade (custa): fluxo validate exec -- doctor"), r)
+        self.assertIn((doctor.OK, "para conferir os agentes de verdade (custa): fluxo validate doctor"), r)
 
     def test_validate_node_velho_ou_ausente_e_falha(self):
         falha = "o pr-reviewer precisa do 22.18+ (ou do 23.6+), que roda o .ts direto"

@@ -198,6 +198,8 @@ def criar_config(cfg, cam, env, profile):
         "primaryBase": cfg["git"]["base"],
         "defaultBase": f"origin/{cfg['git']['base']}",
         "profile": profile,
+        # sem ele, o pr-reviewer roda os agentes no claude -p, que pode nem estar nesta máquina
+        "backend": cfg["tools"][0],
     }
     if _criar_exclusivo(destino, json.dumps(conteudo, indent=2, ensure_ascii=False) + "\n", 0o600):
         return f"config do pr-reviewer criada em {destino} (perfil {profile})"
@@ -442,12 +444,28 @@ def preparar_revisao(cfg, cam, id_, backend, run=subprocess.run, env=None):
     return argv, avisos
 
 
-def preparar_receita(cfg, cam, repo, modo, backend):
+def preparar_receita(cfg, cam, repo, modo, backend, json_=True):
+    """O argv do `pr-review recipe`. Sem `json_`, ele mostra a proposta e pergunta o "sim" no /dev/tty (src/util/tty.ts):
+    só num terminal de verdade, porque num agente com PTY ficaria esperando."""
     if not RECEITA_RE.fullmatch(repo or ""):
         raise cfgmod.ErroConfig(f"nome de repo inválido: {repo!r}")
     extra = {"proposta": [], "fix": ["--fix"], "check": ["--check"]}[modo]
     # o --check não roda agente, e o pr-review recusa --backend com ele
-    return comando(cfg, cam, ["recipe", repo, *extra, "--json", *([] if modo == "check" else _backend(backend))])
+    return comando(cfg, cam, ["recipe", repo, *extra, *(["--json"] if json_ else []),
+                              *([] if modo == "check" else _backend(backend))])
+
+
+def em_primeiro_plano(cam, argv, ch=None, trava=False, esperar=0, popen=subprocess.Popen):
+    """O pr-review neste terminal, para o `fluxo validate recipe` e o `doctor`. Com `trava`, segura a do stack
+    enquanto ele roda, como o processo de fundo do start. Os sinais vão como no `lock run`: o Ctrl-C do terminal já
+    chega ao pr-review, que derruba o que subiu, e aqui só se espera ele terminar."""
+    if ch and _rodando(_pasta_execucao(cam, ch)):  # o mesmo repo em segundo plano: os dois stacks subiriam juntos
+        raise cfgmod.ErroConfig(f"já há uma execução de {ch} rodando em segundo plano: fluxo validate status "
+                                f"--recipe {ch.partition('/')[2]}, ou fluxo validate stop")
+    # uma sessão só desta chamada: com o nome da de fundo, o Trava.pegar a aceitaria de novo como dona
+    sessao = f"validar-aqui-{(ch or 'pr-review').replace('/', '-')}-{os.getpid()}"
+    return lock.rodar(lock.Trava(cam.estado) if trava else None, argv, esperar, popen=popen,
+                      sessao=sessao, pid=os.getpid(), id_=ch)
 
 
 def start(cfg, cam, raiz, ch, argv, trava, id_=None, popen=subprocess.Popen, espera=ESPERA):
@@ -646,6 +664,10 @@ def checar(cfg, cam, run, which, env):
                            f"({raiz}), em caminho absoluto: a validação não acharia os repos"))
     else:
         out.append((OK, f"config do pr-reviewer em {conf}"))
+    backend = dados.get("backend") or "claude"  # o padrão do pr-reviewer (src/config.ts)
+    if dados and backend not in cfg["tools"]:
+        out.append((AVISO, f"o pr-reviewer roda os agentes no {backend}, que não está em tools: "
+                           f"fluxo config set pr-reviewer.backend {cfg['tools'][0]}"))
     if estado:
-        out.append((OK, "para conferir os agentes de verdade (custa): fluxo validate exec -- doctor"))
+        out.append((OK, "para conferir os agentes de verdade (custa): fluxo validate doctor"))
     return out

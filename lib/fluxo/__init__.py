@@ -3,4 +3,4 @@
 Roda no Python 3.9 (o do Xcode, no Mac), só com a stdlib.
 """
 
-__version__ = "0.12.2"  # a mesma do topo do CHANGELOG (o test_comandos confere)
+__version__ = "0.13.0"  # a mesma do topo do CHANGELOG (o test_comandos confere)

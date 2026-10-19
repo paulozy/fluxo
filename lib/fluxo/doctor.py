@@ -12,7 +12,7 @@ import sys
 from pathlib import Path
 
 from . import config as cfgmod
-from . import instalar, messages, validate
+from . import instalar, messages, uso, validate
 
 OK, AVISO, FALHA = "OK", "AVISO", "FALHA"
 BINARIOS = {"claude": "claude", "copilot": "copilot", "kiro": "kiro-cli", "codex": "codex"}
@@ -80,6 +80,8 @@ def checar(caminhos, raiz, cfg=None, erro_cfg=None, run=subprocess.run, which=sh
         out.append((AVISO, "sem pbcopy/clip.exe/wl-copy/xclip/xsel: o `fluxo msg` só vai guardar o texto, sem copiar"))
     if "validate" in modulos:
         out += validate.checar(cfg, caminhos, run, which, env)
+    if "panel" in modulos and "copilot" in cfg.get("tools", []):
+        out.append(_statusline(caminhos, env))
 
     pasta_bin = str(caminhos.home / ".local" / "bin")
     if pasta_bin not in env.get("PATH", "").split(os.pathsep):
@@ -107,6 +109,15 @@ def checar(caminhos, raiz, cfg=None, erro_cfg=None, run=subprocess.run, which=sh
             texto += f"; {len(editado)} editados à mão ({', '.join(editado[:3])}…)"
         out.append((nivel, texto))
     return out
+
+
+def _statusline(caminhos, env):
+    """A statusline do fluxo no Copilot: sem ela, o painel fica sem o gasto e o contexto ao vivo."""
+    return {"fluxo": (OK, "statusline do fluxo no Copilot: o painel tem o gasto ao vivo"),
+            "outra": (AVISO, "o Copilot tem outra statusline: o painel fica sem o gasto ao vivo (fluxo panel enable diz como trocar)"),
+            "ilegível": (AVISO, "o settings.json do Copilot não abriu como JSON: o painel não sabe da statusline"),
+            None: (AVISO, "sem a statusline do fluxo no Copilot: fluxo panel enable liga o gasto ao vivo no painel")}[
+        uso.estado_da_statusline(uso.pastas_copilot(caminhos, env))]
 
 
 def _codex(caminhos, env):

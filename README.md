@@ -115,7 +115,7 @@ e lembra de rodar `fluxo install`.
 | `messages` | skill `/aviso`: redige no seu tom (`~/.config/fluxo/tom.md`, criado por `fluxo msg tone`), pede aprovação e copia para a área de transferência (`fluxo msg copy`). Nada é enviado. | pbcopy, clip.exe, wl-copy, xclip ou xsel |
 | `lock` | `fluxo lock acquire/release/status/break/run`: uma sessão por vez no stack local. O E2E das instruções passa a usar. | tmux (para saber se o dono vive) |
 | `watch` | `fluxo watch tick` lê as suas PRs (GitHub) ou MRs (GitLab) e avisa na área de trabalho: review ou comentário novo, aprovação no commit atual, CI que quebrou ou passou, merge. Só avisa. `fluxo watch enable` agenda: launchd no Mac, systemd no Linux, uma janela do tmux no WSL. `fluxo watch` mostra o status. | `gh` ou `glab` logado |
-| `panel` | `fluxo panel`: as sessões ao vivo em 4 abas (sessão, tarefa, global, sessões; veja [Painel](#painel)), com Enter levando até a sessão no tmux. Os hooks vão para `~/.copilot/hooks`, `~/.kiro/hooks` ou `~/.codex/hooks.json` (no Codex, aprovados em `/hooks`); no Kiro V2, um agente `fluxo` vira o padrão (`fluxo panel enable`). Copilot, Kiro e Codex: no Claude o painel é o agent-tree. | tmux |
+| `panel` | `fluxo panel`: as sessões ao vivo em 4 abas (sessão, tarefa, global, sessões; veja [Painel](#painel)), com Enter levando até a sessão no tmux. Os hooks vão para `~/.copilot/hooks`, `~/.kiro/hooks` ou `~/.codex/hooks.json` (no Codex, aprovados em `/hooks`); no Copilot, o `fluxo panel enable` liga a statusline que leva o gasto, os tokens e o contexto ao painel; no Kiro V2, um agente `fluxo` vira o padrão (`fluxo panel enable`). Copilot, Kiro e Codex: no Claude o painel é o agent-tree. | tmux |
 | `promote` | skill `/promover <id>`: depois do QA, leva os commits que entraram na base para as bases seguintes (`promote.targets`, ex.: staging e main), por cherry-pick, com uma PR/MR por base. Mostra tudo antes de publicar; o merge é sempre seu ou do time. | — |
 | `reviewer` | skill `/revisar-pr` e o agente `verificador`: duas revisões isoladas (`code-reviewer` + diff contra o plano), relatório com veredito (REPROVAR, PRECISA DE HUMANO, APROVÁVEL) em `~/.local/share/fluxo/revisoes/`. O `/concluir` roda antes de abrir a PR/MR. | — |
 | `validate` | skills `/validar <id>` e `/receita <repo>`, com o pr-reviewer: confere a premissa do plano, revisa o código com agentes isolados e, com runbook, executa a mudança num stack local, na base e na branch. Roda em segundo plano (`fluxo validate start`/`status`). Com ele, o `/concluir` valida antes da PR/MR, e o `/revisar-pr` fica manual. O pr-reviewer chega com `fluxo validate enable` (veja [Validação](#validação-com-o-pr-reviewer)). | Node 22.18+, git com acesso ao repo do pr-reviewer, docker para a execução |
@@ -184,15 +184,17 @@ fluxo install
 
 ## Painel
 
-`fluxo panel` (módulo `panel`) abre uma tela com 4 abas. `fluxo panel --text --view session|task|global|list`
-imprime uma delas uma vez.
+`fluxo panel` (módulo `panel`) abre uma tela com 4 abas, em caixas, com a faixa de cima mostrando quantas sessões
+há, quem espera você e a cota do mês do Copilot. `fluxo panel --text --view session|task|global|list` imprime uma
+aba uma vez. `fluxo panel --demo` mostra as 4 abas com dados de mentira, sem ler nem gravar nada: serve para
+conferir o visual num terminal novo.
 
 | Aba | O que mostra |
 |---|---|
-| `1` sessão | a sessão seguida: estado, pasta, tarefa, o último prompt, as ferramentas mais usadas, os subagentes e o log |
-| `2` tarefa | o plano (`planos/<id>.md`): status, o checklist do fluxo em barra, as sessões da tarefa, os vereditos do `/revisar-pr` e as PRs/MRs cujo título cita o id |
-| `3` global | as sessões por estado, os alertas (sessão esperando você, erro de hook, trava presa, CI quebrado, erro do watch), a trava, o feed do watch e as revisões das últimas 24 h |
-| `4` sessões | uma linha por sessão viva, com quem espera você em cima (a aba inicial) |
+| `1` sessão | a sessão seguida: estado, pasta, tarefa e o último prompt; o modelo e o effort, o contexto em barra, os tokens (entrada, saída e cache) e o gasto em créditos; as ferramentas mais usadas, os subagentes e o log |
+| `2` tarefa | o plano (`planos/<id>.md`): status, o checklist do fluxo, as sessões da tarefa com o gasto, os vereditos do `/revisar-pr` e as PRs/MRs cujo título cita o id |
+| `3` global | as sessões por estado, a cota do mês (e o que as sessões do painel gastaram), os alertas (sessão esperando você, erro de hook, trava presa, CI quebrado, erro do watch), a trava, o feed do watch e as revisões das últimas 24 h |
+| `4` sessões | uma linha por sessão viva, com o estado, o modelo, o contexto e o gasto, e quem espera você em cima (a aba inicial) |
 
 **Teclas:**
 - `1`–`4` trocam a aba, e `↑↓` (ou `j`/`k`) escolhem a sessão.
@@ -205,6 +207,31 @@ imprime uma delas uma vez.
 Sem nada fixado, a aba 1 segue a sessão mais recente, mas só troca quando a seguida para. `--follow <id>` e
 `--task <ID>` fixam.
 
+**A cor:**
+- Em 256 cores, os tons são médios, para ler no tema claro (o padrão do Terminal.app) e no escuro.
+- Em 8 cores o painel fica sem cinza, e sem cor nenhuma (`NO_COLOR`) o destaque vai para o negrito e o reverso.
+- Fora de UTF-8 (locale `C`), as bordas e os ícones viram ASCII, e os acentos viram a letra simples.
+
+**O gasto do Copilot (só no Copilot):**
+- **Ao vivo, pela statusline:** o hook não traz uso nenhum, mas o Copilot roda a statusline a cada evento com o
+  estado da sessão. O `fluxo panel enable` põe a do fluxo no `~/.copilot/settings.json`:
+  - ele mostra o que vai gravar e pede um "sim" no terminal;
+  - guarda um backup em `settings.json.fluxo-bak`.
+  - Feche as sessões do Copilot antes, porque uma aberta pode regravar o arquivo.
+  - Se você já tem uma statusline, ele avisa e não mexe nela.
+  - O `fluxo panel disable` e o `fluxo uninstall` tiram só a do fluxo.
+  - Ela não imprime nada no rodapé do Copilot, que já mostra o modelo e a cota.
+- **Sem a statusline:** o modelo e o effort aparecem mesmo assim, lidos do `events.jsonl` da sessão. O gasto e o
+  contexto ficam com `—`.
+- **A cota do mês:** vem do cache local do Copilot (`copilot-user-cache.json`), sem rede. Vale a conta logada no
+  Copilot e o dado da última vez que ele consultou a cota, com a idade do dado ao lado.
+  - Com a cobrança por token, a cota e o gasto são em créditos (1 crédito = US$ 0,01); no billing antigo, em
+    premium requests.
+  - A data de renovação é a de UTC.
+  - Com um token no ambiente (`COPILOT_GITHUB_TOKEN`, `GH_TOKEN`), o Copilot pode usar outra conta que não a
+    logada, e a cota da faixa seria a errada.
+- O formato da statusline e o do cache não têm doc oficial: o que conferir está no `docs/validacao.md`.
+
 **O que cada ferramenta entrega na árvore de subagentes:**
 - **Codex:** completa, com as ferramentas de cada subagente.
 - **Copilot:** o início e o fim de cada subagente, mas as ferramentas ficam na conta da sessão, porque o hook
@@ -215,7 +242,9 @@ Sem nada fixado, a aba 1 segue a sessão mais recente, mas só troca quando a se
 **O que fica no disco:**
 - **Os eventos** (o começo do prompt e de cada comando) ficam em `~/.local/share/fluxo/estado/`, numa pasta
   só sua (700), e os arquivos de eventos são 600.
-- **A poda:** o `fluxo panel` apaga os eventos com mais de 7 dias. O hook nunca apaga nada.
+- **O uso de cada sessão do Copilot** (o último estado que a statusline mandou) fica em `estado/uso/`, um arquivo
+  600 por sessão.
+- **A poda:** o `fluxo panel` apaga os eventos e o uso com mais de 7 dias. O hook e a statusline nunca apagam nada.
 
 ## Codex
 

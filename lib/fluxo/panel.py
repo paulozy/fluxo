@@ -21,7 +21,7 @@ import time
 from pathlib import Path
 
 from . import config as cfgmod
-from . import lock, task, tmux, vistas, watch
+from . import demo, lock, task, tmux, uso, vistas, watch
 
 EVENTOS = {
     # sem permissionRequest: ele dispara antes das regras que liberam sozinhas, e não quer dizer que o
@@ -267,6 +267,13 @@ def podar(estado, agora=None, dias=GUARDA_DIAS):
                 p.unlink()
             except OSError:
                 pass
+    agora = agora or time.time()
+    for p in (Path(estado) / "uso").glob("*"):  # o uso de cada sessão, e o .tmp de uma statusline que morreu no meio
+        try:
+            if p.stat().st_mtime < agora - (3600 if p.suffix == ".tmp" else dias * 86400):
+                p.unlink()
+        except OSError:
+            pass
 
 
 class LeitorEventos:
@@ -329,11 +336,14 @@ class Coletor:
     LENTO = 5.0
     PID = 10.0  # o início do pid do dono da trava (o `ps` do Mac) no máximo a cada isso
 
-    def __init__(self, cam, ligados=(), run=None):
+    def __init__(self, cam, ligados=(), run=None, ferramentas=()):
         self.cam, self.ligados = cam, set(ligados)
         self.run = run
         self.eventos = LeitorEventos(cam.estado)
         self.acumulador = Acumulador()
+        # o uso, o modelo e a cota só existem no Copilot (lib/fluxo/uso.py)
+        self.copilot = uso.pastas_copilot(cam) if "copilot" in set(ferramentas) else None
+        self.leitor_copilot = uso.LeitorSessao()
         self._lento, self._lento_em, self._mtimes, self._pids, self._falhas = {}, -1e18, {}, {}, {}
 
     def _por_mtime(self, caminho, ler):
@@ -365,7 +375,8 @@ class Coletor:
     def _lentos(self, agora, vivos):
         """Uma fonte por vez: a que quebrar fica vazia e vira alerta, e as outras aparecem."""
         estado, dados = self.cam.estado, self.cam.dados
-        out = {"planos": {}, "revisoes": {}, "avisos": [], "vigia": {}, "trava": None, "erros_hook": []}
+        out = {"planos": {}, "revisoes": {}, "avisos": [], "vigia": {}, "trava": None, "erros_hook": [], "usos": {},
+               "modelos": {}}
         self._falhas = {}
 
         def fonte(nome, fazer):
@@ -406,7 +417,28 @@ class Coletor:
             desde = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(agora - 86400))
             out["erros_hook"] = [l for l in linhas if l[:19] >= desde]
 
+        def usos():
+            for p in sorted((estado / "uso").glob("*.json")):
+                registro = self._por_mtime(p, json.loads)
+                if isinstance(registro, dict) and registro.get("sessao"):
+                    out["usos"][registro["sessao"]] = registro
+
+        def modelos():  # das sessões que o painel conhece: as de hoje e de ontem
+            for sid, x in self.acumulador.s.items():
+                if x.get("ferramenta") == "copilot" and uso.ID.fullmatch(sid):
+                    info = self.leitor_copilot.ler(uso.eventos_da_sessao(self.copilot, sid, out["usos"].get(sid)))
+                    if info:
+                        out["modelos"][sid] = info
+
+        def cota():
+            out["cota"] = uso.ler_cota(self.copilot)
+
         fonte("planos", planos)
+        if self.copilot:
+            out["cota"] = None
+            fonte("uso", usos)
+            fonte("modelo", modelos)
+            fonte("cota", cota)
         if "reviewer" in self.ligados:
             fonte("revisões", revisoes)
         if "watch" in self.ligados:
@@ -421,19 +453,24 @@ class Coletor:
         agora = agora or time.time()
         if vivos is None:
             vivos = tmux.panes_vivos(self.run) if self.run else tmux.panes_vivos()
-        if agora - self._lento_em >= self.LENTO:
-            self._lento_em = agora  # mesmo que falhe: senão tudo seria relido a cada quadro
-            self._lento = self._lentos(agora, vivos)
         todos = self.eventos.ler(agora)
         if self.eventos.recomecou:  # virou o dia, ou um arquivo foi trocado: monta de novo
             self.acumulador = Acumulador()
             self.acumulador.aplicar(todos)
         else:
             self.acumulador.aplicar(self.eventos.novos)
+        if agora - self._lento_em >= self.LENTO:  # depois dos eventos: o modelo é lido das sessões que eles trouxeram
+            self._lento_em = agora  # mesmo que falhe: senão tudo seria relido a cada quadro
+            self._lento = self._lentos(agora, vivos)
         tarefas = task.vivas(self.cam.estado, vivos)  # pelo par pane + pane_pid
         # sem tmux, `vivos` vem vazio: aí nenhum pane conta como morto (senão tudo viraria "acabou")
-        return dict(self._lento, agora=agora, ligados=self.ligados,
-                    sessoes=self.acumulador.lista(tarefas, agora, vivos=vivos or None))
+        sessoes_ = self.acumulador.lista(tarefas, agora, vivos=vivos or None)
+        if self.copilot:
+            usos, modelos = self._lento.get("usos") or {}, self._lento.get("modelos") or {}
+            for x in sessoes_:
+                x["uso"] = (uso.ler_uso(usos.get(x["sessao"]), modelos.get(x["sessao"]))
+                            if x.get("ferramenta") == "copilot" else None)
+        return dict(self._lento, agora=agora, ligados=self.ligados, sessoes=sessoes_)
 
 
 def resolver_seguida(sessoes_, prefixo):
@@ -442,10 +479,17 @@ def resolver_seguida(sessoes_, prefixo):
     return next((x["sessao"] for x in sessoes_ if x["sessao"].startswith(prefixo)), prefixo)
 
 
-def texto(cam, ligados, tela, largura=100, altura=200, run=None, agora=None):
+class _Demo:
+    """O Coletor do --demo: os dados de mentira, com o relógio andando (o ícone de trabalhando gira)."""
+
+    def coletar(self, agora=None, vivos=None):
+        return demo.dados(agora)
+
+
+def texto(cam, ligados, tela, largura=100, altura=200, run=None, agora=None, de_mentira=False, ferramentas=()):
     """O que o `fluxo panel --text` imprime: uma vista, uma vez, sem cor."""
     try:
-        dados = Coletor(cam, ligados, run=run).coletar(agora)
+        dados = (_Demo() if de_mentira else Coletor(cam, ligados, run=run, ferramentas=ferramentas)).coletar(agora)
         tela = dict(tela)
         if tela.get("seguida"):
             tela["seguida"] = resolver_seguida(dados["sessoes"], tela["seguida"])
@@ -461,30 +505,78 @@ def pular(pane, run):
     return r.returncode == 0, (r.stderr or "").strip()
 
 
-def _atributos(curses):
-    """Um atributo por estilo das vistas. Sem cor (NO_COLOR, ou um terminal sem), negrito e normal."""
-    attr = {None: curses.A_NORMAL, "titulo": curses.A_BOLD, "fraco": curses.A_DIM, "sel": curses.A_REVERSE,
-            "aba": curses.A_REVERSE | curses.A_BOLD, "ok": curses.A_NORMAL, "atencao": curses.A_BOLD, "erro": curses.A_BOLD}
-    if os.environ.get("NO_COLOR") or not curses.has_colors():
+# estilo: (texto e fundo em 256 cores, texto e fundo em 8, negrito); fundo None é o do terminal. Os tons de 256 são
+# médios, para ler no tema claro (o padrão do Terminal.app) e no escuro; quem tem fundo tem texto explícito. Em 8
+# cores não há cinza: fraco e aba ficam no atributo do mono (A_DIM, que o Terminal.app às vezes nem mostra).
+PALETA = {
+    "ok": (35, None, "GREEN", None, False), "atencao": (178, None, "YELLOW", None, True),
+    "erro": (167, None, "RED", None, True), "titulo": (38, None, "CYAN", None, True),
+    "fraco": (245, None, None, None, False), "borda": (243, None, "BLUE", None, False),
+    "aba": (245, None, None, None, False), "aba_ativa": (231, 31, "BLACK", "CYAN", True),
+    "cab": (231, 25, "WHITE", "BLUE", False), "cab_forte": (231, 25, "WHITE", "BLUE", True),
+    "cab_fraco": (153, 25, "WHITE", "BLUE", False), "cab_alerta": (220, 25, "YELLOW", "BLUE", True),
+    "cab_erro": (231, 160, "WHITE", "RED", True),
+    "m_opus": (173, None, "YELLOW", None, False), "m_sonnet": (68, None, "BLUE", None, False),
+    "m_haiku": (71, None, "GREEN", None, False), "m_gpt": (134, None, "MAGENTA", None, False),
+}
+
+
+def _atributos(curses, env=None):
+    """Um atributo por estilo das vistas, em 3 níveis: 256 cores, 8 cores, e sem cor (NO_COLOR, ou um terminal
+    sem), em que o significado fica no negrito e no reverso."""
+    env = os.environ if env is None else env
+    negrito, reverso = curses.A_BOLD, curses.A_REVERSE
+    attr = {None: curses.A_NORMAL, "titulo": negrito, "fraco": curses.A_DIM, "borda": curses.A_NORMAL, "sel": reverso,
+            "aba": curses.A_NORMAL, "aba_ativa": reverso | negrito, "ok": curses.A_NORMAL, "atencao": negrito,
+            "erro": negrito, "cab": reverso, "cab_forte": reverso | negrito, "cab_fraco": reverso,
+            "cab_alerta": reverso | negrito, "cab_erro": reverso | negrito}
+    attr.update(dict.fromkeys(("m_opus", "m_sonnet", "m_haiku", "m_gpt"), curses.A_NORMAL))
+    if env.get("NO_COLOR") or not curses.has_colors():
         return attr
     try:
         curses.use_default_colors()
-        fundo = -1
+        padrao = -1
     except curses.error:
-        fundo = curses.COLOR_BLACK
-    cores = {"ok": curses.COLOR_GREEN, "atencao": curses.COLOR_YELLOW, "erro": curses.COLOR_RED, "titulo": curses.COLOR_CYAN}
-    for n, (estilo, cor) in enumerate(cores.items(), 1):
-        try:
-            curses.init_pair(n, cor, fundo)
-            attr[estilo] = curses.color_pair(n) | (curses.A_BOLD if estilo in ("erro", "titulo") else 0)
+        padrao = curses.COLOR_BLACK
+    rico = getattr(curses, "COLORS", 8) >= 256
+    for n, (estilo, (t256, f256, t8, f8, forte)) in enumerate(PALETA.items(), 1):
+        if rico:
+            texto_, fundo = t256, f256
+        else:
+            texto_, fundo = (getattr(curses, f"COLOR_{c}") if c else None for c in (t8, f8))
+        if texto_ is None:
+            continue
+        try:  # o Python 3.9 só aceita 256 pares, e um terminal pode ter menos: o par que falha fica no mono
+            curses.init_pair(n, texto_, padrao if fundo is None else fundo)
         except curses.error:
-            pass
+            continue
+        attr[estilo] = curses.color_pair(n) | (negrito if forte else 0)
     return attr
 
 
-def tela(cam, run, ligados=(), inicial=None, intervalo=1.0):
+def desenhar(scr, curses, attr, linhas, altura, largura, em_ascii=False):
+    """Um quadro: cada segmento com o atributo do estilo. `em_ascii`: fora de UTF-8 (vistas.em_ascii)."""
+    scr.erase()
+    for y, linha in enumerate(linhas[:max(0, altura)]):
+        x = 0
+        for texto_, estilo in vistas.ajustar(linha, largura - 1):
+            try:
+                scr.addstr(y, x, vistas.em_ascii(texto_) if em_ascii else texto_, attr.get(estilo, curses.A_NORMAL))
+            except curses.error:  # o canto da tela, ou um caractere que o locale não desenha
+                pass
+            x += vistas.colunas(texto_)
+        estilo = linha[-1][1] if linha else None
+        if estilo and estilo.startswith("cab"):  # a faixa do cabeçalho até a borda, sem escrever na última célula
+            try:
+                scr.chgat(y, x, -1, attr.get(estilo, curses.A_NORMAL))
+            except curses.error:
+                pass
+    scr.refresh()
+
+
+def tela(cam, run, ligados=(), inicial=None, intervalo=1.0, de_mentira=False, ferramentas=()):
     """A tela em curses, com as 4 abas das vistas (lib/fluxo/vistas.py). Tudo o que ela desenha vem das
-    vistas, e o que cada tecla faz vem de vistas.aplicar: aqui fica só o curses."""
+    vistas, e o que cada tecla faz vem de vistas.aplicar: aqui fica só o curses. `de_mentira`: o --demo."""
     import curses
     import locale
 
@@ -492,22 +584,16 @@ def tela(cam, run, ligados=(), inicial=None, intervalo=1.0):
         locale.setlocale(locale.LC_ALL, "")
     except locale.Error:
         pass
-    glifos = vistas.glifos_para(locale.getpreferredencoding(False))
-    coletor = Coletor(cam, ligados, run=run)
+    try:  # o codeset da libc, que é o do ncurses: no locale C, o modo UTF-8 do Python (PEP 540) faz o
+        # getpreferredencoding dizer UTF-8, e as bordas sumiriam da tela
+        codificacao = locale.nl_langinfo(locale.CODESET)
+    except (AttributeError, ValueError):
+        codificacao = locale.getpreferredencoding(False)
+    glifos = vistas.glifos_para(codificacao)
+    em_ascii = glifos is vistas.GLIFOS_ASCII
+    coletor = _Demo() if de_mentira else Coletor(cam, ligados, run=run, ferramentas=ferramentas)
     estado = dict({"aba": "list", "escolhida": None, "seguida": None, "fixada": False, "tarefa": None,
                    "rolagem": 0, "escondidas": set()}, **(inicial or {}))
-
-    def desenhar(scr, attr, linhas, altura, largura):
-        scr.erase()
-        for y, linha in enumerate(linhas[:max(0, altura)]):
-            x = 0
-            for texto_, estilo in vistas.ajustar(linha, largura - 1):
-                try:
-                    scr.addstr(y, x, texto_, attr.get(estilo, curses.A_NORMAL))
-                except curses.error:  # o canto da tela, ou um caractere que o locale não desenha
-                    pass
-                x += vistas.colunas(texto_)
-        scr.refresh()
 
     def principal(scr):
         for passo in (lambda: curses.curs_set(0), lambda: curses.set_escdelay(25)):  # o Esc sem 1 s de espera
@@ -533,11 +619,12 @@ def tela(cam, run, ligados=(), inicial=None, intervalo=1.0):
                 if estado["escolhida"] not in ids:
                     estado["escolhida"] = ids[0] if ids else None
                 corpo = vistas.VISTAS[estado["aba"]](dados, estado, largura - 1, max(1, altura - 3), glifos)
-                linhas = [vistas.barra_de_abas(estado, dados), []] + corpo
+                linhas = vistas.cabecalho(estado, dados, largura - 1, glifos) + corpo
             except Exception as exc:  # noqa: BLE001 — um quadro que não monta vira alerta, e a tela segue
                 linhas = [[(f"o panel não montou o quadro: {exc!r}", "erro")]]
             linhas = linhas[:max(0, altura - 1)] + [[]] * max(0, altura - 1 - len(linhas))
-            desenhar(scr, attr, linhas + [[(nota, "atencao")] if nota else vistas.rodape(estado, glifos)], altura, largura)
+            desenhar(scr, curses, attr, linhas + [[(nota, "atencao")] if nota else vistas.rodape(estado, glifos)],
+                     altura, largura, em_ascii)
             try:
                 tecla = scr.getch()
             except KeyboardInterrupt:
@@ -548,7 +635,9 @@ def tela(cam, run, ligados=(), inicial=None, intervalo=1.0):
             if acao == "ir":
                 quem = estado["seguida"] if estado["aba"] == "session" else estado["escolhida"]
                 alvo = next((x for x in dados.get("sessoes") or () if x["sessao"] == quem), None)
-                if alvo and alvo.get("pane"):
+                if de_mentira:
+                    nota = "no --demo, o Enter não leva a lugar nenhum"
+                elif alvo and alvo.get("pane"):
                     ok, erro = pular(alvo["pane"], run)
                     nota = "" if ok else f"não deu para ir até a sessão: {erro}"
                 else:
@@ -571,7 +660,7 @@ def tela(cam, run, ligados=(), inicial=None, intervalo=1.0):
                 return 0
             except curses.error:
                 pass
-        print(texto(cam, ligados, estado, run=run))
+        print(texto(cam, ligados, estado, run=run, de_mentira=de_mentira, ferramentas=ferramentas))
         print(f"fluxo panel: o terminal não abriu a tela ({exc}); acima, a vista uma vez", file=sys.stderr)
     return 0
 
@@ -620,13 +709,21 @@ def arquivos_da_ferramenta(cfg, ferr, Arquivo, skills=(), **_):
     return [], []  # Claude: o requer do modulo.json o deixa de fora; lá o painel é o agent-tree
 
 
-def avisos_do_install(removidos, cam, gravados=()):
+def avisos_do_install(removidos, cam, gravados=(), cfg=None):
     """O que o install precisa dizer sobre os hooks.
 
     - Vai apagar o agente `fluxo` do Kiro, que o `panel enable` tinha feito padrão: sem o `disable`, o
       Kiro ficaria com um agente padrão que não existe.
-    - Vai criar ou mudar o `hooks.json` do Codex: lá, hook novo ou mudado só roda depois de aprovado."""
+    - Vai criar ou mudar o `hooks.json` do Codex: lá, hook novo ou mudado só roda depois de aprovado.
+    - O Copilot sem statusline nenhuma, com o panel: o gasto ao vivo fica de fora até o `panel enable`. E a
+      statusline do fluxo que ficou depois de o panel ou o Copilot saírem da config."""
     avisos = []
+    if cfg is not None:
+        estado, painel = uso.estado_da_statusline(uso.pastas_copilot(cam)), "panel" in cfg["modules"] and "copilot" in cfg["tools"]
+        if painel and estado is None:
+            avisos.append("panel no Copilot: fluxo panel enable liga a statusline, que leva o gasto e o contexto ao painel")
+        elif not painel and estado == "fluxo":
+            avisos.append("a statusline do Copilot ainda chama o fluxo: rode fluxo panel disable para tirá-la")
     if ".kiro/agents/fluxo.json" in removidos and (cam.estado / "painel-agente-anterior.txt").exists():
         avisos.append("o agente fluxo é o padrão do Kiro (fluxo panel enable): rode fluxo panel disable para devolver o anterior")
     if ".codex/hooks.json" in gravados:
@@ -634,7 +731,28 @@ def avisos_do_install(removidos, cam, gravados=()):
     return avisos
 
 
-def ligar(cfg, cam, run):
+def ligar(cfg, cam, run, perguntas=None):
+    """O Copilot precisa da statusline do fluxo no settings.json (lib/fluxo/uso.py), para o gasto ao vivo; o Kiro
+    V2, de tornar o agente `fluxo` o padrão; o Codex, de uma aprovação em /hooks, que é do usuário."""
+    code, msg = _ligar_kiro(cfg, cam, run)
+    if "copilot" not in cfg["tools"]:
+        return code, msg
+    code_copilot, msg_copilot = uso.ligar_statusline(uso.pastas_copilot(cam), perguntas)
+    return max(code, code_copilot), f"{msg_copilot}\n{msg.replace('nada a ligar: ', '')}"
+
+
+def desligar(cfg, cam, run):
+    """Tira a statusline do fluxo do Copilot e devolve o agente padrão do Kiro. Os dois decidem pelo que está no
+    disco, e não pela config: o Copilot pode já ter saído de `tools`."""
+    code, msg = _desligar_kiro(cfg, cam, run)
+    pastas = uso.pastas_copilot(cam)
+    if uso.estado_da_statusline(pastas) != "fluxo":
+        return code, msg
+    code_copilot, msg_copilot = uso.desligar_statusline(pastas)
+    return max(code, code_copilot), f"{msg_copilot}\n{msg.replace('nada a desligar: ', '')}"
+
+
+def _ligar_kiro(cfg, cam, run):
     """O Kiro V2 precisa de um passo: tornar o agente `fluxo` o padrão (e guardar o anterior). O Codex,
     de uma aprovação em /hooks, que é do usuário."""
     codex = "; no Codex, aprove os hooks em /hooks" if "codex" in cfg["tools"] else ""
@@ -649,7 +767,7 @@ def ligar(cfg, cam, run):
     return (0, "agente fluxo é o padrão do Kiro agora" + codex) if r.returncode == 0 else (1, f"kiro-cli: {r.stderr.strip()}")
 
 
-def desligar(cfg, cam, run):
+def _desligar_kiro(cfg, cam, run):
     """Devolve o agente padrão que o `ligar` guardou. Decide pelo que foi guardado, e não pela config:
     depois de tirar o kiro de `tools`, o engine v2 ou o módulo, o padrão do Kiro ainda é o `fluxo`."""
     guardado = cam.estado / "painel-agente-anterior.txt"

@@ -44,6 +44,24 @@ class Doctor(unittest.TestCase):
         self.assertNotIn(doctor.FALHA, [n for n, _ in r])
         self.assertIn((doctor.AVISO, "nada instalado ainda: rode `fluxo install`"), r)
 
+    def test_statusline_do_copilot(self):
+        cam = escrever_config(self.home, "copilot-tudo")
+        cfg = config.carregar(cam, montar.modulos_existentes(RAIZ))
+
+        def checar():
+            return [x for x in doctor.checar(cam, RAIZ, cfg=cfg, which=lambda b: f"/usr/bin/{b}", run=lambda *a, **k: Resp(0, "1.0\n"),
+                                             conectar=lambda *a: io.BytesIO(), versao=(3, 9), env={"PATH": ""})
+                    if "statusline" in x[1] or "settings.json" in x[1]]
+
+        self.assertEqual(checar(), [(doctor.AVISO, "sem a statusline do fluxo no Copilot: fluxo panel enable liga o gasto ao vivo no painel")])
+        settings = self.home / ".copilot" / "settings.json"  # o --home isola: nunca o ~/.copilot de verdade
+        settings.parent.mkdir(parents=True)
+        settings.write_text(json.dumps({"statusLine": {"type": "command", "command": '"$HOME/.local/bin/fluxo" statusline'}}))
+        self.assertEqual([n for n, _ in checar()], [doctor.OK])
+        settings.write_text(json.dumps({"statusLine": {"command": "minha.sh"}}))
+        self.assertIn("outra statusline", checar()[0][1])
+        self.assertEqual(self.checar("copilot") and [x for x in self.checar("copilot") if "statusline" in x[1]], [])  # sem o panel
+
     def test_sem_a_ferramenta_e_falha(self):
         r = self.checar("copilot", which=lambda b: None if b == "copilot" else f"/usr/bin/{b}")
         self.assertIn((doctor.FALHA, "copilot não está no PATH"), r)

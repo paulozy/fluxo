@@ -195,7 +195,7 @@ Cada linha sai com `OK`, `AVISO` ou `FALHA`. Só a `FALHA` faz o `doctor` sair c
 | Instruções | `~/.claude/rules/fluxo.md` | `~/.copilot/instructions/fluxo.instructions.md` | `~/.kiro/steering/fluxo.md` | `~/.codex/AGENTS.md` |
 | Agentes | `~/.claude/agents/*.md` | `~/.copilot/agents/*.agent.md` | `~/.kiro/agents/*.json` | `~/.codex/agents/*.toml` |
 | Skills | `~/.claude/skills/` | `~/.copilot/skills/` | `~/.kiro/skills/` | `~/.agents/skills/` (ou `~/.codex/skills/` com o Copilot junto) |
-| Painel | o agent-tree (o `panel` não entra) | hooks em `~/.copilot/hooks/` | hooks; no V2, o agente `fluxo` vira o padrão | hooks em `~/.codex/hooks.json`, aprovados em `/hooks` |
+| Painel | o agent-tree (o `panel` não entra) | hooks em `~/.copilot/hooks/`; a statusline (`panel enable`) no `settings.json` | hooks; no V2, o agente `fluxo` vira o padrão | hooks em `~/.codex/hooks.json`, aprovados em `/hooks` |
 
 **No Codex:**
 - **Um `AGENTS.md` global seu** dá conflito no install. Junte os dois num arquivo seu, ou deixe o do fluxo.
@@ -561,9 +561,15 @@ O primeiro tick só registra o estado atual, sem avisar nada. O watch nunca faz 
 
 ```bash
 fluxo panel                          # a tela
+fluxo panel --demo                   # dados de mentira: confira o visual do seu terminal
 fluxo panel --text --view global     # uma vez, sem a tela
-fluxo panel enable                   # só no Kiro V2: o agente fluxo vira o padrão
+fluxo panel enable                   # Copilot: a statusline do gasto ao vivo; Kiro V2: o agente fluxo vira o padrão
 ```
+
+**O gasto no Copilot:** o `fluxo panel enable` grava a statusline do fluxo no `~/.copilot/settings.json`, depois do
+"sim" e com backup. Feche as sessões do Copilot antes. A partir das sessões novas, as abas mostram o modelo, o
+effort, o contexto, os tokens e os créditos de cada sessão, e a faixa de cima mostra a cota do mês. Já tem uma
+statusline sua? O `enable` avisa e não mexe nela; sem a do fluxo, o painel fica só com o modelo e o effort.
 
 **As teclas:**
 - `1`–`4` trocam a aba: sessão, tarefa, global e sessões;
@@ -766,7 +772,7 @@ fluxo doctor
 | `fluxo msg tone \| copy` | o tom e a área de transferência (módulo `messages`) |
 | `fluxo lock acquire \| release \| status \| break \| run` | a trava do stack (módulo `lock`) |
 | `fluxo watch [tick \| enable \| disable]` | aviso das PRs/MRs (módulo `watch`) |
-| `fluxo panel [enable \| disable] [--text]` | o painel (módulo `panel`) |
+| `fluxo panel [enable \| disable] [--text] [--demo]` | o painel (módulo `panel`) |
 | `fluxo validate [enable \| disable \| start \| status \| stop \| recipe \| doctor \| exec]` | o pr-reviewer (módulo `validate`); sem ação, num terminal, pergunta |
 | `fluxo completion zsh \| bash` | o script do completar com Tab |
 | `fluxo package` | o zip para máquina sem git |
@@ -794,7 +800,7 @@ fluxo doctor
 | `~/.local/share/fluxo/revisoes/<id>/` | as revisões do `/revisar-pr` |
 | `~/.local/share/fluxo/projetos/<repo>.md` | a memória de cada repo |
 | `~/.local/share/fluxo/manifesto.json` | o que o install gravou, com o sha de cada arquivo |
-| `~/.local/share/fluxo/estado/` | as sessões, a trava, o watch, os eventos do painel e as validações (pasta 700) |
+| `~/.local/share/fluxo/estado/` | as sessões, a trava, o watch, os eventos e o uso (`uso/`) do painel e as validações (pasta 700) |
 | `~/.local/share/fluxo/pr-reviewer/` | o clone do pr-reviewer |
 | `~/.local/bin/fluxo`, `~/.local/bin/pr-review` | os comandos |
 | `~/.config/pr-reviewer/` | a config, os perfis e os `envs/` do pr-reviewer |

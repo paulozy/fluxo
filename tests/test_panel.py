@@ -370,8 +370,103 @@ class LigarKiroV2(unittest.TestCase):
             cfg = config.carregar(cam, montar.modulos_existentes(RAIZ))
             chamadas = []
             run = lambda argv, **kw: chamadas.append(argv) or subprocess.CompletedProcess(argv, 0, "", "")
-            self.assertEqual(panel.ligar(cfg, cam, run)[0], 0)
+            code, msg = panel.ligar(cfg, cam, run)  # sem terminal, a statusline do Copilot fica pendente
+            self.assertEqual(code, 1)
+            self.assertIn("rode fluxo panel enable num terminal", msg)
+            self.assertIn("agente fluxo é o padrão do Kiro agora", msg)
             self.assertEqual(chamadas[-1], ["kiro-cli", "agent", "set-default", "fluxo"])
+
+
+class CursesFalso:
+    """O que o _atributos usa do curses, com `cores` (curses.COLORS) e um teto de pares que o terminal aceita."""
+    A_NORMAL, A_BOLD, A_DIM, A_REVERSE = 0, 1 << 21, 1 << 20, 1 << 18
+    COLOR_BLACK, COLOR_RED, COLOR_GREEN, COLOR_YELLOW, COLOR_BLUE, COLOR_MAGENTA, COLOR_CYAN, COLOR_WHITE = range(8)
+
+    class error(Exception):
+        pass
+
+    def __init__(self, cores, com_cor=True, pares=999):
+        self.COLORS, self.com_cor, self.teto, self.pares = cores, com_cor, pares, {}
+
+    def has_colors(self):
+        return self.com_cor
+
+    def use_default_colors(self):
+        pass
+
+    def init_pair(self, n, texto, fundo):
+        if n > self.teto:
+            raise self.error("pares demais")
+        self.pares[n] = (texto, fundo)
+
+    def color_pair(self, n):
+        return n << 8
+
+
+class TelaFalsa:
+    def __init__(self):
+        self.escrito, self.pintado = [], []
+
+    def erase(self):
+        pass
+
+    def refresh(self):
+        pass
+
+    def addstr(self, y, x, texto, attr):
+        self.escrito.append((y, x, texto))
+
+    def chgat(self, y, x, n, attr):
+        self.pintado.append((y, x, n, attr))
+
+
+class Desenhar(unittest.TestCase):
+    def test_faixa_ate_a_borda_e_ascii(self):
+        c = CursesFalso(256)
+        attr = panel._atributos(c, {})
+        scr = TelaFalsa()
+        linhas = [[(" fluxo ", "cab_forte"), ("• 2 sessões ", "cab")], [("sessões — você", None)], []]
+        panel.desenhar(scr, c, attr, linhas, 5, 40, em_ascii=True)
+        self.assertEqual(scr.pintado, [(0, 19, -1, attr["cab"])])  # o resto da faixa, sem escrever na última célula
+        self.assertIn((0, 7, "* 2 sessoes "), scr.escrito)
+        self.assertIn((1, 0, "sessoes - voce"), scr.escrito)
+        panel.desenhar(scr, c, attr, [[("x" * 80, None)]], 1, 10)
+        self.assertEqual(scr.escrito[-1], (0, 0, "x" * 9))  # largura - 1: o canto de baixo nunca é escrito
+
+
+class Atributos(unittest.TestCase):
+    def par(self, c, attr, estilo):
+        return c.pares[attr[estilo] >> 8 & 0xFF]
+
+    def test_sem_cor(self):
+        for c, env in ((CursesFalso(256), {"NO_COLOR": "1"}), (CursesFalso(256, com_cor=False), {})):
+            attr = panel._atributos(c, env)
+            self.assertEqual(c.pares, {})
+            self.assertEqual((attr["cab"], attr["sel"], attr["fraco"]), (c.A_REVERSE, c.A_REVERSE, c.A_DIM))
+            self.assertEqual(attr["aba_ativa"], c.A_REVERSE | c.A_BOLD)
+
+    def test_256_cores(self):
+        c = CursesFalso(256)
+        attr = panel._atributos(c, {})
+        self.assertEqual(self.par(c, attr, "fraco"), (245, -1))  # cinza de verdade, e não o A_DIM
+        self.assertEqual(self.par(c, attr, "cab"), (231, 25))  # quem tem fundo tem texto explícito
+        self.assertEqual(self.par(c, attr, "m_opus"), (173, -1))
+        self.assertTrue(attr["erro"] & c.A_BOLD)
+        self.assertEqual(attr["sel"], c.A_REVERSE)
+        self.assertLessEqual(len(c.pares), 20)
+
+    def test_8_cores(self):
+        c = CursesFalso(8)
+        attr = panel._atributos(c, {})
+        self.assertEqual(self.par(c, attr, "ok"), (c.COLOR_GREEN, -1))
+        self.assertEqual(self.par(c, attr, "cab"), (c.COLOR_WHITE, c.COLOR_BLUE))
+        self.assertEqual(attr["fraco"], c.A_DIM)  # sem cinza em 8 cores
+
+    def test_par_recusado_fica_no_mono(self):
+        c = CursesFalso(256, pares=4)
+        attr = panel._atributos(c, {})
+        self.assertEqual(len(c.pares), 4)
+        self.assertEqual(attr["cab"], c.A_REVERSE)
 
 
 if __name__ == "__main__":

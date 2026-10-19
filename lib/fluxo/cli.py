@@ -15,7 +15,7 @@ from pathlib import Path
 
 from . import config as cfgmod
 from . import __version__
-from . import ajustes, assistente, completar, doctor, empacotar, fonte, instalar, lock, messages, montar, panel, render, task, tmux, validate, varredura, vistas, watch
+from . import ajustes, assistente, completar, demo, doctor, empacotar, fonte, instalar, lock, messages, montar, panel, render, task, tmux, uso, validate, varredura, vistas, watch
 
 ERROS_DE_USO = (cfgmod.ErroConfig, montar.ErroMontagem, render.ErroTemplate, fonte.ErroFonte)
 
@@ -434,24 +434,32 @@ def cmd_hook(args, raiz):
 
 
 def cmd_panel(args, raiz):
-    if args.acao and (args.view or args.task or args.follow):
-        print("fluxo panel: --view, --task e --follow são da tela, e não de enable/disable", file=sys.stderr)
+    if args.acao and (args.view or args.task or args.follow or args.demo):
+        print("fluxo panel: --view, --task, --follow e --demo são da tela, e não de enable/disable", file=sys.stderr)
         return 2
     if args.task and not task.ID_RE.fullmatch(args.task):
         print(f"fluxo panel: id {args.task!r} inválido", file=sys.stderr)
         return 2
+    tela = {"aba": args.view or "list", "tarefa": args.task, "seguida": args.follow, "fixada": bool(args.follow)}
+    if args.demo:  # antes da config e da poda: o visual se confere sem instalar nada, e sem tocar o disco
+        if args.text or not sys.stdout.isatty():
+            print(panel.texto(None, demo.LIGADOS, tela, de_mentira=True))
+            return 0
+        return panel.tela(None, run=subprocess.run, ligados=demo.LIGADOS, inicial=tela, de_mentira=True)
     # o disable vale com o módulo desligado: é o que devolve o agente padrão do Kiro depois de tirá-lo
     cam, cfg = _carregar(args, raiz, None if args.acao == "disable" else "panel")
     if args.acao in ("enable", "disable"):
-        code, msg = (panel.ligar if args.acao == "enable" else panel.desligar)(cfg, cam, run=subprocess.run)
+        if args.acao == "enable":  # a statusline do Copilot só é gravada com o "sim" no terminal
+            code, msg = panel.ligar(cfg, cam, subprocess.run, _perguntas(args, input, None, None))
+        else:
+            code, msg = panel.desligar(cfg, cam, subprocess.run)
         print(msg, file=sys.stderr if code else sys.stdout)
         return code
     panel.podar(cam.estado)  # só o panel apaga eventos velhos: o hook nunca apaga nada
-    tela = {"aba": args.view or "list", "tarefa": args.task, "seguida": args.follow, "fixada": bool(args.follow)}
     if args.text or not sys.stdout.isatty():
-        print(panel.texto(cam, cfg["modules"], tela))
+        print(panel.texto(cam, cfg["modules"], tela, ferramentas=cfg["tools"]))
         return 0
-    return panel.tela(cam, run=subprocess.run, ligados=cfg["modules"], inicial=tela)
+    return panel.tela(cam, run=subprocess.run, ligados=cfg["modules"], inicial=tela, ferramentas=cfg["tools"])
 
 
 INIT_PADROES = {"base": "develop", "code_dir": "~/code", "chat": "draft", "tracker": "none", "engine": "v2"}
@@ -621,7 +629,7 @@ def cmd_install(args, raiz):
     avisos += validate.avisos_do_install(cfg, cam)
     avisos += panel.avisos_do_install({a.rel for a in acoes if a.tipo == instalar.REMOVER}, cam,
                                       {a.rel for a in acoes if a.tipo in (instalar.CRIAR, instalar.ATUALIZAR)
-                                       or (a.tipo == instalar.CONFLITO and args.force)})
+                                       or (a.tipo == instalar.CONFLITO and args.force)}, cfg)
     for a in avisos:
         print(f"aviso: {a}")
     tools = ", ".join(t + (" " + cfg["kiro"]["engine"] if t == "kiro" else "") for t in cfg["tools"])
@@ -646,12 +654,19 @@ def cmd_uninstall(args, raiz):
     acoes = instalar.planejar_remocao(instalar.ler_manifesto(cam.manifesto), cam.home)
     for a in validate.avisos_do_uninstall(cam):
         print(f"aviso: {a}")
+    pastas = uso.pastas_copilot(cam)
+    statusline = uso.estado_da_statusline(pastas) == "fluxo"  # sem o fluxo, o Copilot falharia a cada evento
     print(f"fluxo uninstall em {cam.home}:")
     print(instalar.resumo(acoes))
+    if statusline:
+        print(f"  e a statusline do fluxo no {pastas['home'] / 'settings.json'}")
     if args.dry_run:
         print("dry-run: nada foi removido")
         return 0
     instalar.desinstalar(acoes, cam.home, cam.manifesto)
+    if statusline:
+        code, msg = uso.desligar_statusline(pastas)
+        print(msg if not code else f"aviso: {msg}")
     print("removido.")
     return 0
 
@@ -929,17 +944,18 @@ def parser():
     p.add_argument("--event", default="")
     p.set_defaults(fn=cmd_hook)
 
-    p = comando("panel", "as sessões ao vivo (módulo panel); enable e disable só no Kiro V2",
-                ("fluxo panel", "fluxo panel --text", "fluxo panel --view task --task PROJ-12"))
+    p = comando("panel", "as sessões ao vivo (módulo panel); enable liga a statusline do Copilot e o agente do Kiro V2",
+                ("fluxo panel", "fluxo panel --demo", "fluxo panel --text", "fluxo panel --view task --task PROJ-12"))
     p.add_argument("--text", action="store_true", help="imprime uma vez, sem a tela interativa")
     p.add_argument("--view", choices=[chave for chave, _ in vistas.ABAS],
                    help="a aba: session (a sessão seguida), task, global ou list (padrão)")
     p.add_argument("--task", help="a tarefa da aba task (padrão: a da sessão seguida, ou o plano mais novo)")
     p.add_argument("--follow", metavar="SESSION", help="o começo do id da sessão a seguir na aba session")
+    p.add_argument("--demo", action="store_true", help="dados de mentira, para conferir o visual (não lê nem grava nada)")
     p.set_defaults(fn=cmd_panel, acao=None)
     g = acoes(p)
-    acao(g, "enable", "Kiro V2: o agente fluxo, com os hooks do painel, vira o padrão")
-    acao(g, "disable", "Kiro V2: volta o agente padrão de antes")
+    acao(g, "enable", "Copilot: a statusline do fluxo (o gasto ao vivo); Kiro V2: o agente fluxo vira o padrão")
+    acao(g, "disable", "Copilot: tira a statusline do fluxo; Kiro V2: volta o agente padrão de antes")
 
     p = comando("completion", "o script do completar com Tab, para o zsh ou o bash",
                 ("fluxo completion zsh > ~/.zfunc/_fluxo   # e no .zshrc, antes do compinit: fpath=(~/.zfunc $fpath)",
@@ -979,6 +995,8 @@ def main(argv, raiz):
     argv, comando = list(argv), []
     if argv[:1] == ["hook"]:
         return _hook(argv, raiz)
+    if argv[:1] == ["statusline"]:  # como o hook: nunca imprime nem falha (o script fluxo chega aqui antes)
+        return uso.statusline(argv[1:])
     if argv[:1] == ["__complete"]:  # o Tab do shell: nunca imprime erro e sempre sai com 0, como o hook
         with contextlib.redirect_stderr(io.StringIO()):
             return completar.completar(parser(), argv[1:], sys.stdout, Path(raiz))

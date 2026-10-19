@@ -707,7 +707,10 @@ class Linha(unittest.TestCase):
         cam = cfgmod.Caminhos(home=tmp)
         cfgmod.criar_estado(cam.estado)
         trava = validate.lock.Trava(cam.estado)
-        trava.pegar("validar-receita-api", pid=os.getppid())  # o processo de fundo, vivo
+        fundo = subprocess.Popen(["sleep", "30"])  # o processo de fundo, vivo (o pai, num container, é o pid 1)
+        self.addCleanup(fundo.wait)
+        self.addCleanup(fundo.kill)
+        trava.pegar("validar-receita-api", pid=fundo.pid)
         with mock.patch.object(validate, "_rodando", return_value=False), contextlib.redirect_stderr(io.StringIO()):
             codigo = validate.em_primeiro_plano(cam, ["x"], "receita/api", True, popen=lambda a: self.fail("rodou"))
         self.assertEqual(codigo, validate.lock.OCUPADA)

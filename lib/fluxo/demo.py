@@ -3,6 +3,7 @@
 É o que se olha para conferir o visual num terminal novo (o Terminal.app, o iTerm2, um tmux de outro TERM), e é a
 fixture "cheia" dos testes de largura e altura. Tudo aqui tem o mesmo formato do que o `panel.Coletor` devolve.
 """
+import calendar
 import time
 
 LIGADOS = {"task", "reviewer", "watch", "lock"}
@@ -43,7 +44,8 @@ def dados(agora=None):
                      "entrada": 52000, "saida": 1800, "cache": 30000, "creditos": 0.42, "premium": None}),
         _sessao(agora, "demo-5", "docs", "acabou", 1500, ferramenta="kiro", pane="", contagem={"fs_read": 3}),
     ]
-    renova = time.mktime(time.strptime(time.strftime("%Y-%m", time.localtime(agora + 32 * 86400)) + "-01", "%Y-%m-%d"))
+    ano, mes = time.gmtime(agora)[:2]
+    renova = calendar.timegm((ano + mes // 12, mes % 12 + 1, 1, 0, 0, 0))  # o dia 1º do mês que vem, 00:00 UTC
     return {
         "agora": agora, "ligados": set(LIGADOS), "sessoes": sessoes,
         "planos": {"PROJ-12": dict(PLANO, mtime=agora - 600), "PROJ-13": dict(PLANO, status="rascunho", mtime=agora - 9000)},

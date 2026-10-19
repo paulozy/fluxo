@@ -554,6 +554,26 @@ def _atributos(curses, env=None):
     return attr
 
 
+def desenhar(scr, curses, attr, linhas, altura, largura, em_ascii=False):
+    """Um quadro: cada segmento com o atributo do estilo. `em_ascii`: fora de UTF-8 (vistas.em_ascii)."""
+    scr.erase()
+    for y, linha in enumerate(linhas[:max(0, altura)]):
+        x = 0
+        for texto_, estilo in vistas.ajustar(linha, largura - 1):
+            try:
+                scr.addstr(y, x, vistas.em_ascii(texto_) if em_ascii else texto_, attr.get(estilo, curses.A_NORMAL))
+            except curses.error:  # o canto da tela, ou um caractere que o locale não desenha
+                pass
+            x += vistas.colunas(texto_)
+        estilo = linha[-1][1] if linha else None
+        if estilo and estilo.startswith("cab"):  # a faixa do cabeçalho até a borda, sem escrever na última célula
+            try:
+                scr.chgat(y, x, -1, attr.get(estilo, curses.A_NORMAL))
+            except curses.error:
+                pass
+    scr.refresh()
+
+
 def tela(cam, run, ligados=(), inicial=None, intervalo=1.0, de_mentira=False, ferramentas=()):
     """A tela em curses, com as 4 abas das vistas (lib/fluxo/vistas.py). Tudo o que ela desenha vem das
     vistas, e o que cada tecla faz vem de vistas.aplicar: aqui fica só o curses. `de_mentira`: o --demo."""
@@ -574,24 +594,6 @@ def tela(cam, run, ligados=(), inicial=None, intervalo=1.0, de_mentira=False, fe
     coletor = _Demo() if de_mentira else Coletor(cam, ligados, run=run, ferramentas=ferramentas)
     estado = dict({"aba": "list", "escolhida": None, "seguida": None, "fixada": False, "tarefa": None,
                    "rolagem": 0, "escondidas": set()}, **(inicial or {}))
-
-    def desenhar(scr, attr, linhas, altura, largura):
-        scr.erase()
-        for y, linha in enumerate(linhas[:max(0, altura)]):
-            x = 0
-            for texto_, estilo in vistas.ajustar(linha, largura - 1):
-                try:
-                    scr.addstr(y, x, vistas.em_ascii(texto_) if em_ascii else texto_, attr.get(estilo, curses.A_NORMAL))
-                except curses.error:  # o canto da tela, ou um caractere que o locale não desenha
-                    pass
-                x += vistas.colunas(texto_)
-            estilo = linha[-1][1] if linha else None
-            if estilo and estilo.startswith("cab"):  # a faixa do cabeçalho até a borda, sem escrever na última célula
-                try:
-                    scr.chgat(y, x, -1, attr.get(estilo, curses.A_NORMAL))
-                except curses.error:
-                    pass
-        scr.refresh()
 
     def principal(scr):
         for passo in (lambda: curses.curs_set(0), lambda: curses.set_escdelay(25)):  # o Esc sem 1 s de espera
@@ -621,7 +623,8 @@ def tela(cam, run, ligados=(), inicial=None, intervalo=1.0, de_mentira=False, fe
             except Exception as exc:  # noqa: BLE001 — um quadro que não monta vira alerta, e a tela segue
                 linhas = [[(f"o panel não montou o quadro: {exc!r}", "erro")]]
             linhas = linhas[:max(0, altura - 1)] + [[]] * max(0, altura - 1 - len(linhas))
-            desenhar(scr, attr, linhas + [[(nota, "atencao")] if nota else vistas.rodape(estado, glifos)], altura, largura)
+            desenhar(scr, curses, attr, linhas + [[(nota, "atencao")] if nota else vistas.rodape(estado, glifos)],
+                     altura, largura, em_ascii)
             try:
                 tecla = scr.getch()
             except KeyboardInterrupt:

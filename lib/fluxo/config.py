@@ -221,6 +221,9 @@ def ler_json(caminho):
     return dados, lido
 
 
+NAO_EXISTIA = object()  # o `antes` de quem vai criar o arquivo: recusa se ele aparecer até o rename
+
+
 def gravar_json(caminho, dados, antes=None, modo=0o600, cabecalho=""):
     """Grava sem deixar o arquivo pela metade. Segue o link (a config pode ser um link do dotfiles, e o os.replace
     trocaria o link por um arquivo comum), mantém o modo do original (`modo` só vale para um arquivo novo) e, com
@@ -244,7 +247,7 @@ def gravar_json(caminho, dados, antes=None, modo=0o600, cabecalho=""):
                 agora = alvo.read_bytes()
             except FileNotFoundError:
                 agora = None
-            if agora != antes:
+            if agora != (None if antes is NAO_EXISTIA else antes):
                 raise ErroConfig(f"{caminho} mudou enquanto era editado; nada foi gravado")
         os.replace(tmp, alvo)
     except BaseException:

@@ -403,6 +403,37 @@ class CursesFalso:
         return n << 8
 
 
+class TelaFalsa:
+    def __init__(self):
+        self.escrito, self.pintado = [], []
+
+    def erase(self):
+        pass
+
+    def refresh(self):
+        pass
+
+    def addstr(self, y, x, texto, attr):
+        self.escrito.append((y, x, texto))
+
+    def chgat(self, y, x, n, attr):
+        self.pintado.append((y, x, n, attr))
+
+
+class Desenhar(unittest.TestCase):
+    def test_faixa_ate_a_borda_e_ascii(self):
+        c = CursesFalso(256)
+        attr = panel._atributos(c, {})
+        scr = TelaFalsa()
+        linhas = [[(" fluxo ", "cab_forte"), ("• 2 sessões ", "cab")], [("sessões — você", None)], []]
+        panel.desenhar(scr, c, attr, linhas, 5, 40, em_ascii=True)
+        self.assertEqual(scr.pintado, [(0, 19, -1, attr["cab"])])  # o resto da faixa, sem escrever na última célula
+        self.assertIn((0, 7, "* 2 sessoes "), scr.escrito)
+        self.assertIn((1, 0, "sessoes - voce"), scr.escrito)
+        panel.desenhar(scr, c, attr, [[("x" * 80, None)]], 1, 10)
+        self.assertEqual(scr.escrito[-1], (0, 0, "x" * 9))  # largura - 1: o canto de baixo nunca é escrito
+
+
 class Atributos(unittest.TestCase):
     def par(self, c, attr, estilo):
         return c.pares[attr[estilo] >> 8 & 0xFF]

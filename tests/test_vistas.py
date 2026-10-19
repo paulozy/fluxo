@@ -542,7 +542,13 @@ class Pecas(unittest.TestCase):
 
     def test_em_ascii(self):
         self.assertEqual(vistas.em_ascii("sessões — você"), "sessoes - voce")
-        self.assertEqual(vistas.em_ascii("漢"), "?")
+        for texto_ in ("…½ pronto", "漢字x", "ﬁm", "a\u0301b"):  # as mesmas colunas: a tela avança o x pelo original
+            with self.subTest(texto=texto_):
+                saida = vistas.em_ascii(texto_)
+                saida.encode("ascii")
+                self.assertEqual(vistas.colunas(saida), vistas.colunas(texto_))
+        self.assertEqual(vistas.em_ascii("漢"), "? ")
+        self.assertEqual(vistas.em_ascii("…x"), ".x")
 
 
 class Cabecalho(unittest.TestCase):
@@ -590,12 +596,21 @@ class Demo(unittest.TestCase):
         self.assertEqual(DESENHO & set("".join(partes)), set())
 
     def test_altura_curta_corta_o_log_primeiro(self):
-        t = texto(vistas.vista_sessao(self.d, {"seguida": "demo-1"}, 80, 21))
+        ferramentas = lambda t: t.split("ferramentas")[1].split("subagentes")[0]
+        t = texto(vistas.vista_sessao(self.d, {"seguida": "demo-1"}, 80, 21))  # o 80x24 do Terminal.app
         self.assertIn("modelo e uso", t)
         self.assertIn("subagentes", t)
         self.assertNotIn("╭─ log", t)
-        self.assertNotIn("grep  ", t.split("ferramentas")[1].split("subagentes")[0])  # só as 3 mais usadas
+        self.assertIn("grep", ferramentas(t))  # cortar as ferramentas não daria 3 linhas ao log: ficam todas
+        self.assertGreaterEqual(len(t.splitlines()), 20)
+        t = texto(vistas.vista_sessao(self.d, {"seguida": "demo-1"}, 80, 24))
+        self.assertNotIn("grep", ferramentas(t))  # aqui o top 3 abre o log, com 3 linhas
+        self.assertEqual(len(t.split("╭─ log")[1].splitlines()), 5)
         self.assertIn("╭─ log", texto(vistas.vista_sessao(self.d, {"seguida": "demo-1"}, 100, 43)))
+        apertada = texto(vistas.vista_sessao(self.d, {"seguida": "demo-1"}, 80, 16))  # nem as caixas: até 1 ferramenta
+        self.assertIn("bash", ferramentas(apertada))
+        self.assertNotIn("edit", ferramentas(apertada))
+        self.assertIn("code-reviewer", apertada)
 
 
 class Uso(unittest.TestCase):

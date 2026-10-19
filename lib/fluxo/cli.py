@@ -654,12 +654,19 @@ def cmd_uninstall(args, raiz):
     acoes = instalar.planejar_remocao(instalar.ler_manifesto(cam.manifesto), cam.home)
     for a in validate.avisos_do_uninstall(cam):
         print(f"aviso: {a}")
+    pastas = uso.pastas_copilot(cam)
+    statusline = uso.estado_da_statusline(pastas) == "fluxo"  # sem o fluxo, o Copilot falharia a cada evento
     print(f"fluxo uninstall em {cam.home}:")
     print(instalar.resumo(acoes))
+    if statusline:
+        print(f"  e a statusline do fluxo no {pastas['home'] / 'settings.json'}")
     if args.dry_run:
         print("dry-run: nada foi removido")
         return 0
     instalar.desinstalar(acoes, cam.home, cam.manifesto)
+    if statusline:
+        code, msg = uso.desligar_statusline(pastas)
+        print(msg if not code else f"aviso: {msg}")
     print("removido.")
     return 0
 

@@ -219,7 +219,7 @@ Sem nada fixado, a aba 1 segue a sessão mais recente, mas só troca quando a se
   - guarda um backup em `settings.json.fluxo-bak`.
   - Feche as sessões do Copilot antes, porque uma aberta pode regravar o arquivo.
   - Se você já tem uma statusline, ele avisa e não mexe nela.
-  - O `fluxo panel disable` tira só a do fluxo.
+  - O `fluxo panel disable` e o `fluxo uninstall` tiram só a do fluxo.
   - Ela não imprime nada no rodapé do Copilot, que já mostra o modelo e a cota.
 - **Sem a statusline:** o modelo e o effort aparecem mesmo assim, lidos do `events.jsonl` da sessão. O gasto e o
   contexto ficam com `—`.
@@ -228,6 +228,8 @@ Sem nada fixado, a aba 1 segue a sessão mais recente, mas só troca quando a se
   - Com a cobrança por token, a cota e o gasto são em créditos (1 crédito = US$ 0,01); no billing antigo, em
     premium requests.
   - A data de renovação é a de UTC.
+  - Com um token no ambiente (`COPILOT_GITHUB_TOKEN`, `GH_TOKEN`), o Copilot pode usar outra conta que não a
+    logada, e a cota da faixa seria a errada.
 - O formato da statusline e o do cache não têm doc oficial: o que conferir está no `docs/validacao.md`.
 
 **O que cada ferramenta entrega na árvore de subagentes:**

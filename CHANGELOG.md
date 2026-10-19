@@ -15,7 +15,8 @@
 - **`fluxo panel enable` no Copilot:** grava a statusline do fluxo no `~/.copilot/settings.json`, depois do "sim"
   no terminal e com backup. O `copilot config` recusa essa chave.
   - Se já existe uma statusline sua, ele avisa e não mexe nela.
-  - O `disable` tira só a do fluxo.
+  - O `disable` tira só a do fluxo, e o `uninstall` também (sem o binário, o Copilot falharia a cada evento).
+  - Se uma sessão aberta do Copilot criar ou mudar o arquivo enquanto a pergunta espera, nada é gravado.
   - O `doctor` e o `install` avisam quando ela falta ou sobra.
 - **`fluxo panel --demo`:** as 4 abas com dados de mentira, sem ler nem gravar nada, para conferir o visual.
 

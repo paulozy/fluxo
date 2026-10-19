@@ -247,11 +247,23 @@ def glifos_para(codificacao):
     return GLIFOS_UTF8 if "utf" in (codificacao or "").lower().replace("-", "") else GLIFOS_ASCII
 
 
+TROCAS_ASCII = {"—": "-", "–": "-", "…": ".", "•": "*", "·": "."}
+
+
 def em_ascii(texto):
     """Fora de UTF-8, o curses não desenha acento nem travessão: "sessões" vira "sessoes", e o que sobra fora do
-    ASCII vira "?". A largura não muda (cada letra acentuada é uma coluna)."""
-    sem = "".join(c for c in unicodedata.normalize("NFKD", texto.replace("—", "-")) if not unicodedata.combining(c))
-    return sem.encode("ascii", "replace").decode("ascii")
+    ASCII vira "?". Caractere a caractere, cada um nas mesmas colunas de antes: a tela avança o x pela largura
+    original, e um "…" que virasse "..." escreveria por cima do segmento seguinte."""
+    out = []
+    for c in texto:
+        n = _largura(c)
+        if c.isascii() or not n:
+            out.append(c if n else "")
+            continue
+        base = "".join(x for x in unicodedata.normalize("NFKD", c) if not unicodedata.combining(x))
+        troca = TROCAS_ASCII.get(c) or (base if base.isascii() and len(base) == 1 else "?")
+        out.append(troca[:n].ljust(n))
+    return "".join(out)
 
 
 def rodape(tela, glifos=GLIFOS_UTF8):
@@ -475,7 +487,8 @@ def _linhas_de_uso(x, glifos):
 
 def vista_sessao(dados, tela, largura, altura, glifos=GLIFOS_UTF8):
     """Aba 1: a sessão seguida (pasta, tarefa e prompt), o modelo e o uso, as ferramentas, os subagentes e o log.
-    Sem altura para tudo, o log cede primeiro, depois as ferramentas (até as 3 mais usadas), e por fim os subagentes."""
+    Sem altura para tudo, o log cede primeiro. As ferramentas só caem para as 3 mais usadas se isso der ao log 3
+    linhas; e, se nem as caixas couberem, elas descem até 1 antes de os subagentes cederem."""
     x = next((s for s in dados.get("sessoes") or () if s["sessao"] == tela.get("seguida")), None)
     if x is None and tela.get("fixada") and tela.get("seguida"):
         return [[(f"a sessão fixada ({limpo(tela['seguida'], 40)}) não está entre as de hoje: Tab passa para outra", "atencao")]]
@@ -497,7 +510,7 @@ def vista_sessao(dados, tela, largura, altura, glifos=GLIFOS_UTF8):
     subs = sorted((x.get("subagentes") or {}).values(), key=lambda s: s["inicio"])
     resto = altura - len(out)
     nf, ns = min(8, max(1, len(contagem))), max(1, len(subs))
-    if resto - (nf + ns + 4) < 5:  # o log não teria 3 linhas: as ferramentas cedem primeiro, até o top 3
+    if resto - (nf + ns + 4) - 2 < 3 <= resto - (min(nf, 3) + ns + 4) - 2:  # o top 3 dá 3 linhas ao log
         nf = min(nf, 3)
     while nf + ns + 4 > resto and nf > 1:
         nf -= 1

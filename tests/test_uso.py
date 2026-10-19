@@ -44,6 +44,22 @@ COTA = {"business": {"login": "usuario-teste", "copilot_plan": "business", "toke
                                                                "unlimited": False, "has_quota": False}}}}
 
 
+@contextlib.contextmanager
+def fuso(nome):
+    """O TZ do processo durante o bloco: o teste da data em UTC não pode depender do fuso da máquina."""
+    antes = os.environ.get("TZ")
+    os.environ["TZ"] = nome
+    time.tzset()
+    try:
+        yield
+    finally:
+        if antes is None:
+            os.environ.pop("TZ", None)
+        else:
+            os.environ["TZ"] = antes
+        time.tzset()
+
+
 def jsonl(eventos):
     return "".join(json.dumps(e, separators=(",", ":")) + "\n" for e in eventos)
 
@@ -101,6 +117,8 @@ class Statusline(Base):
         self.assertEqual((r["modelo"], r["ctx_pct"], r["entrada"], r["nano_aiu"], r["premium"]), (None,) * 5)
         auto = uso.normalizar(dict(STATUS, model={"id": "auto", "auto_tier": "premium"}), T0)
         self.assertEqual(auto["modelo"], "auto (premium)")
+        antigo = uso.normalizar(dict(STATUS, context_window={"used_percentage": 70, "context_window_size": 200_000}), T0)
+        self.assertEqual((antigo["ctx_pct"], antigo["ctx_max"]), (70, 200_000))  # sem os campos do /context
 
     def test_pelo_script_sem_o_cli(self):
         """O atalho do script fluxo: o Copilot roda isto a cada evento, e o cli importa 20 módulos."""
@@ -145,6 +163,13 @@ class Sessao(Base):
         arquivo.write_text(jsonl([{"type": "session.resume", "data": {"selectedModel": "gpt-5.1"}}]))  # outro inode
         self.assertEqual(leitor.ler(arquivo), {"modelo": "gpt-5.1", "effort": None})
         self.assertIsNone(leitor.ler(arquivo.parent / "nada.jsonl"))
+        self.assertIsNone(leitor.ler(arquivo.parent))  # o transcript_path é de terceiro: uma pasta não derruba
+        os.chmod(arquivo, 0)
+        try:
+            if not os.access(arquivo, os.R_OK):  # como root, o chmod não tira a leitura
+                self.assertIsNone(uso.LeitorSessao().ler(arquivo))
+        finally:
+            os.chmod(arquivo, 0o600)
 
     def test_caminho_da_statusline_vale_mais(self):
         self.assertEqual(uso.eventos_da_sessao(self.pastas, "cop-1", {"transcript": "/outro/events.jsonl"}),
@@ -186,6 +211,16 @@ class Cota(Base):
         self.assertAlmostEqual(c["pct"], 94.5)
         self.assertEqual(c["renova"], 1793491200.0)  # o quota_reset_at 0 cai no quota_reset_date_utc, com Z
         self.assertAlmostEqual(c["ts"], 1792439729.865)
+
+    def test_a_mais_recente_entre_as_pastas(self):
+        self.escrever([("2026-10-01T00:00:00Z", COTA["business"])])
+        velha = json.loads(json.dumps(COTA["business"]))
+        velha["quota_snapshots"]["premium_interactions"]["remaining"] = 1000
+        segunda = self.home / "outra-cache"
+        segunda.mkdir()
+        (segunda / "copilot-user-cache.json").write_text(cache(("2026-10-19T00:00:00Z", velha)))
+        pastas = dict(self.pastas, cache=self.pastas["cache"] + [segunda])
+        self.assertEqual(uso.ler_cota(pastas)["usado"], 900.0)  # a da segunda pasta é a mais nova
 
     def test_sem_login_a_mais_recente(self):
         self.escrever([("2026-10-18T00:00:00Z", COTA["outra"]), ("2026-10-19T00:00:00Z", COTA["business"])], login=None)
@@ -245,10 +280,33 @@ class Settings(Base):
 
     def test_cria_o_arquivo(self):
         self.assertEqual(uso.ligar_statusline(self.pastas, self.perguntas(True))[0], 0)
+        self.assertEqual(self.settings.parent.stat().st_mode & 0o777, 0o700)  # o ~/.copilot do Copilot é 700
         self.assertEqual(json.loads(self.settings.read_text()), {"statusLine": uso.STATUSLINE})
         self.assertFalse((self.settings.parent / "settings.json.fluxo-bak").exists())
         self.assertEqual(uso.desligar_statusline(self.pastas)[0], 0)
         self.assertEqual(json.loads(self.settings.read_text()), {})
+
+    def test_arquivo_que_aparece_durante_a_pergunta(self):
+        """A pergunta espera o humano: um Copilot aberto pode criar o settings.json nesse meio tempo."""
+        dele = json.dumps({"model": "gpt-5.1", "trustedFolders": ["/repo"]})
+
+        def sim(*_):
+            self.settings.parent.mkdir(parents=True, exist_ok=True)
+            self.settings.write_text(dele)
+            return True
+
+        code, msg = uso.ligar_statusline(self.pastas, mock.Mock(escrever=mock.Mock(), sim=sim))
+        self.assertEqual(code, 1)
+        self.assertIn("mudou enquanto era editado", msg)
+        self.assertEqual(self.settings.read_text(), dele)
+
+    def test_ctrl_c_na_pergunta(self):
+        from fluxo import assistente
+        for erro in (assistente.Cancelado, KeyboardInterrupt):
+            with self.subTest(erro=erro.__name__):
+                p = mock.Mock(escrever=mock.Mock(), sim=mock.Mock(side_effect=erro))
+                self.assertEqual(uso.ligar_statusline(self.pastas, p), (1, "nada foi gravado"))
+        self.assertFalse(self.settings.exists())
 
     def test_sem_terminal_ou_com_nao_nada_muda(self):
         code, msg = uso.ligar_statusline(self.pastas, None)
@@ -284,7 +342,8 @@ class Settings(Base):
     def test_reconhece_o_comando_do_fluxo(self):
         for comando in (uso.STATUSLINE["command"], "~/.local/bin/fluxo statusline", "/opt/fluxo/fluxo statusline "):
             self.assertTrue(uso.do_fluxo({"command": comando}), comando)
-        for comando in ("fluxo statusline-velha", "minha-statusline", None):
+        for comando in ("fluxo statusline-velha", "minha-statusline", "minha-linha; fluxo statusline",
+                        "echo x && ~/.local/bin/fluxo statusline", None):
             self.assertFalse(uso.do_fluxo({"command": comando}), comando)
 
 
@@ -309,7 +368,8 @@ class Painel(Base):
         self.assertEqual(d["cota"]["total"], 1900.0)
         t = vistas.como_texto(vistas.vista_sessoes(d, {}, 100, 10))
         self.assertIn("12,3 cr", t)
-        self.assertIn("renova 01/11", vistas.como_texto(vistas.cabecalho({}, d, 100)))  # 00:00 UTC, e não o 31/10 daqui
+        with fuso("America/Sao_Paulo"):  # 00:00 UTC do dia 1º, que aqui ainda é 31/10
+            self.assertIn("renova 01/11", vistas.como_texto(vistas.cabecalho({}, d, 100)))
         sem = panel.Coletor(self.cam, {"panel"}).coletar(T0, vivos=set())  # sem o Copilot em tools
         self.assertNotIn("cota", sem)
         self.assertNotIn("uso", sem["sessoes"][0])
@@ -347,6 +407,22 @@ class Painel(Base):
         self.assertEqual(code, 0)
         self.assertIn("statusline do fluxo desligada", msg)
         self.assertIn("fluxo panel enable", " ".join(panel.avisos_do_install(set(), self.cam, (), cfg)))
+
+    def test_uninstall_tira_a_statusline(self):
+        self.settings_do_fluxo()
+        with contextlib.redirect_stdout(io.StringIO()) as out:
+            self.assertEqual(cli.main(["uninstall", "--home", str(self.home), "--dry-run"], RAIZ), 0)
+        self.assertIn("statusline do fluxo", out.getvalue())
+        self.assertEqual(uso.estado_da_statusline(self.pastas), "fluxo")  # o dry-run não mexe
+        with contextlib.redirect_stdout(io.StringIO()) as out:
+            self.assertEqual(cli.main(["uninstall", "--home", str(self.home)], RAIZ), 0)
+        self.assertIn("statusline do fluxo desligada", out.getvalue())
+        self.assertIsNone(uso.estado_da_statusline(self.pastas))
+
+    def settings_do_fluxo(self):
+        settings = self.pastas["home"] / "settings.json"
+        settings.parent.mkdir(parents=True, exist_ok=True)
+        settings.write_text(json.dumps({"statusLine": uso.STATUSLINE}))
 
     def test_enable_pelo_cli_sem_terminal(self):
         err = io.StringIO()

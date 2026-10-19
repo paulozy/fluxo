@@ -14,6 +14,7 @@ Fontes (Copilot CLI 1.0.98; o que não tem doc oficial está no docs/validacao.m
 import json
 import os
 import re
+import stat
 import sys
 import tempfile
 import time
@@ -25,8 +26,9 @@ from . import config as cfgmod
 ID = re.compile(r"[A-Za-z0-9-]{1,120}")
 NANO = 1e9
 STATUSLINE = {"type": "command", "command": '"$HOME/.local/bin/fluxo" statusline'}
-DO_FLUXO = re.compile(r"fluxo\"?\s+statusline\s*$")
+DO_FLUXO = re.compile(r'^\s*"?[^\s;&|"]*fluxo"?\s+statusline\s*$')  # o comando inteiro: `x; fluxo statusline` é seu
 TIPOS = (b'"session.start"', b'"session.resume"', b'"session.model_change"')
+BLOCO = 4 << 20  # o events.jsonl é lido em blocos: um de 60 MB inteiro na memória custava 117 MB
 LIMITE = 1_000_000  # o stdin da statusline: o JSON tem uns poucos KB
 
 
@@ -93,7 +95,8 @@ def statusline(argv, stdin=None, env=None, agora=None):
         registro = normalizar(json.loads((stdin or sys.stdin).read(LIMITE) or "null"), agora or time.time())
         if registro:
             gravar(estado, registro)
-    except BaseException as exc:  # noqa: B036 — inclui o SIGTERM que o Copilot manda depois de 10 s
+    except BaseException as exc:  # noqa: B036 — o Ctrl-C também. O SIGTERM do Copilot (10 s) mata sem passar aqui,
+        # e o .tmp que sobrar a poda tira em 1 h
         try:
             if estado is not None:
                 cfgmod.criar_estado(estado)
@@ -134,19 +137,24 @@ class LeitorSessao:
             st = os.stat(caminho)
         except OSError:
             return None
+        if not stat.S_ISREG(st.st_mode):  # o transcript_path é de terceiro: pode ser uma pasta
+            return None
         atual = self.s.get(caminho)
         if not atual or atual["ino"] != st.st_ino or st.st_size < atual["pos"]:
             atual = self.s[caminho] = {"ino": st.st_ino, "pos": 0, "resto": b"", "modelo": None, "effort": None}
         if st.st_size > atual["pos"]:
-            with open(caminho, "rb") as fh:
-                fh.seek(atual["pos"])
-                bloco = fh.read()
-            atual["pos"] += len(bloco)
-            linhas = (atual["resto"] + bloco).split(b"\n")
-            atual["resto"] = linhas.pop()  # a linha que o Copilot ainda está escrevendo
-            for linha in linhas:
-                if any(t in linha for t in TIPOS):
-                    self._evento(atual, linha)
+            try:
+                with open(caminho, "rb") as fh:
+                    fh.seek(atual["pos"])
+                    for bloco in iter(lambda: fh.read(BLOCO), b""):
+                        atual["pos"] += len(bloco)
+                        linhas = (atual["resto"] + bloco).split(b"\n")
+                        atual["resto"] = linhas.pop()  # a linha que o Copilot ainda está escrevendo
+                        for linha in linhas:
+                            if any(t in linha for t in TIPOS):
+                                self._evento(atual, linha)
+            except OSError:  # sem permissão, por exemplo: as outras sessões seguem
+                return None
         return {"modelo": atual["modelo"], "effort": atual["effort"]}
 
     @staticmethod
@@ -211,26 +219,29 @@ def ler_cota(pastas):
     """A cota de premium_interactions do cache do CLI, ou None (sem cache, sem cota, ou a entrada é de outra conta).
 
     O cache tem uma entrada por token, e mais de uma conta: vale a do login de agora (lastLoggedInUser do
-    config.json) e, entre as dele, a mais recente. Sem saber o login, a mais recente de todas."""
+    config.json) e, entre as dele, a mais recente, juntando as pastas candidatas (uma pode ter um cache velho).
+    Sem saber o login, a mais recente de todas. Um token no ambiente (COPILOT_GITHUB_TOKEN, GH_TOKEN) vale mais que
+    o login guardado, e aí a cota pode ser de outra conta: o docs/validacao.md confere."""
     login = None
     try:
         login = _objeto(_objeto(json.loads(_sem_comentario((pastas["home"] / "config.json").read_text(
             encoding="utf-8")))).get("lastLoggedInUser")).get("login")
     except (OSError, ValueError):
         pass
+    entradas = []
     for pasta in pastas["cache"]:
         try:
             bruto = json.loads(_sem_comentario((pasta / "copilot-user-cache.json").read_text(encoding="utf-8")))
         except (OSError, ValueError):
             continue
-        entradas = [e for e in _objeto(_objeto(bruto).get("copilotUserCache")).values()
-                    if isinstance(e, dict) and isinstance(e.get("response"), dict)]
-        if login:
-            entradas = [e for e in entradas if e["response"].get("login") == login]
-        if entradas:
-            e = max(entradas, key=lambda e: _epoch(e.get("retrievedAt")) or 0)
-            return _cota(e["response"], _epoch(e.get("retrievedAt")))
-    return None
+        entradas += [e for e in _objeto(_objeto(bruto).get("copilotUserCache")).values()
+                     if isinstance(e, dict) and isinstance(e.get("response"), dict)]
+    if login:
+        entradas = [e for e in entradas if e["response"].get("login") == login]
+    if not entradas:
+        return None
+    e = max(entradas, key=lambda e: _epoch(e.get("retrievedAt")) or 0)
+    return _cota(e["response"], _epoch(e.get("retrievedAt")))
 
 
 def _cota(r, ts):
@@ -305,16 +316,21 @@ def ligar_statusline(pastas, perguntas):
         return 1, f"a statusline do Copilot pede confirmação: rode fluxo panel enable num terminal, ou ponha no {caminho}: {trecho}"
     perguntas.escrever(f"o fluxo vai gravar no {caminho} (com backup em settings.json.fluxo-bak):\n  {trecho}\n"
                        "feche as sessões do Copilot antes: uma aberta pode regravar o arquivo e desfazer isto")
-    if not perguntas.sim("gravar?", False):
+    from .assistente import Cancelado  # aqui, e não no topo: a statusline não pode pagar o import dele
+    try:
+        if not perguntas.sim("gravar?", False):
+            return 1, "nada foi gravado"
+    except (Cancelado, KeyboardInterrupt):  # o Ctrl-C ou o Ctrl-D na pergunta
         return 1, "nada foi gravado"
     novo = dict(dados, statusLine=dict(_objeto(atual), **STATUSLINE))  # um padding ou refreshInterval seu fica
     try:
-        caminho.parent.mkdir(parents=True, exist_ok=True)
+        caminho.parent.mkdir(mode=0o700, parents=True, exist_ok=True)  # o ~/.copilot do Copilot é 700
         if lido is not None:
             fd = os.open(str(caminho) + ".fluxo-bak", os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
             with os.fdopen(fd, "wb") as fh:
                 fh.write(lido)
-        cfgmod.gravar_json(caminho, novo, antes=lido, cabecalho=cabecalho)
+        # a pergunta espera o humano: um Copilot aberto pode ter criado o arquivo nesse meio tempo
+        cfgmod.gravar_json(caminho, novo, antes=cfgmod.NAO_EXISTIA if lido is None else lido, cabecalho=cabecalho)
     except (OSError, cfgmod.ErroConfig) as exc:
         return 1, f"não deu para gravar o {caminho}: {exc}"
     return 0, "statusline do fluxo ligada no Copilot: vale nas sessões novas (confira em /statusline que o item custom está marcado)"
